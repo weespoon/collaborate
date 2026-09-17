@@ -1,0 +1,25 @@
+# Secrets. This repo is public - nothing matching these may ever be committed.
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.wrangler/
+
+# Generated - `make bundle` / `make wheel` / `make dist` rebuild these.
+worker/public/
+backend/dist/
+backend/build/
+backend/src/collaborate/bundle.py
+
+# pywrangler's vendored Pyodide install and its virtualenv.
+worker/python_modules/
+worker/.venv-workers/
+node_modules/
+.DS_Store

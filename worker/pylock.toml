@@ -1,0 +1,13 @@
+lock-version = "1.0"
+created-by = "uv"
+requires-python = ">=3.14.2"
+
+[[packages]]
+name = "collaborate"
+version = "0.1.0"
+archive = { path = "../backend/dist/collaborate-0.1.0-py3-none-any.whl", hashes = { sha256 = "986b4f4c0e4d5324b0ee6d78a449edf65b33529a6554169bc8218d212677fd34" } }
+
+[[packages]]
+name = "workers-runtime-sdk"
+version = "1.8.5"
+wheels = [{ url = "https://files.pythonhosted.org/packages/21/73/6f7b88fad812975b7fafe0a8e5a1a366454ad357e648d96093e3843ed5fe/workers_runtime_sdk-1.8.5-py3-none-any.whl", upload-time = 2026-09-17T08:33:58Z, size = 36161, hashes = { sha256 = "593587db6f80794d0c24a8b4e2998f13a490a2de8bb27aafa46a7818b39c9ab4" } }]

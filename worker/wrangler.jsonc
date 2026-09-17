@@ -1,0 +1,23 @@
+{
+  "name": "collaborate",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-09-17",
+  "compatibility_flags": ["python_workers"],
+
+  // The frontend and the sample SVGs, assembled by `make dist`. Worker first on
+  // /api/*, assets for everything else - one origin, so no CORS anywhere.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+
+  // Non-secret configuration only. The API key is a secret:
+  //     wrangler secret put ANTHROPIC_API_KEY
+  "vars": {
+    "PROMPT_ID": "doodle",
+    "PROMPT_VERSION": "1"
+  },
+
+  "observability": { "enabled": true }
+}

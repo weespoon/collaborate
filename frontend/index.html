@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collaborate</title>
+<link rel="stylesheet" href="/src/style.css">
+<!-- Classic script: sets window.SVG before the deferred module below runs. -->
+<script src="https://cdn.jsdelivr.net/npm/@svgdotjs/svg.js@3.2.8/dist/svg.min.js"></script>
+<script type="module" src="/src/app.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>Collaborate</h1>
+  <div class="meta" id="prompt-meta">&nbsp;</div>
+</header>
+
+<main>
+  <section class="pane canvas-pane">
+    <div id="canvas" class="canvas"></div>
+    <div class="controls">
+      <button id="send" class="primary">Send to Claude</button>
+      <button id="undo">Undo</button>
+      <span class="spacer"></span>
+      <label class="sample">
+        Load
+        <select id="sample"><option value="">sample…</option></select>
+      </label>
+    </div>
+    <p class="hint" id="hint">Draw a few strokes, then send.</p>
+  </section>
+
+  <section class="pane think-pane">
+    <div class="pane-head">
+      <h2>Thinking</h2>
+      <span class="status" id="status">idle</span>
+    </div>
+    <div class="thinking" id="thinking">
+      <p class="placeholder">Claude's reasoning appears here while it draws.</p>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+</body>
+</html>

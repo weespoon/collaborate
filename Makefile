@@ -7,7 +7,7 @@ PORT   ?= 8787
 ENV_FILE  := backend/.env
 ENV_FLAG  := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE),)
 
-.PHONY: setup dev test clean bundle vendor dist worker-dev deploy
+.PHONY: setup dev test clean bundle vendor dist worker-dev deploy secret
 
 ## Create the venv and install the backend in editable mode.
 setup:
@@ -65,6 +65,13 @@ worker-dev: vendor dist
 ## Deploy to Cloudflare. Needs `wrangler login` and the ANTHROPIC_API_KEY secret.
 deploy: vendor dist
 	cd worker && uv run pywrangler deploy
+
+## Upload backend/.env's key as the Worker's secret. Idempotent - run it any
+## time the deployed /api/health reports the key is not set. Piped via stdin so
+## the key never lands in a command line or in shell history.
+secret:
+	@grep -m1 '^ANTHROPIC_API_KEY=' $(ENV_FILE) | cut -d= -f2- | tr -d '\n' \
+		| (cd worker && npx --yes wrangler secret put ANTHROPIC_API_KEY)
 
 clean:
 	rm -rf $(VENV) backend/src/*.egg-info worker/public backend/dist backend/build \

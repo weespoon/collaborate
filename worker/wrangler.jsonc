@@ -23,5 +23,12 @@
     "REQUEST_TIMEOUT_S": "240"
   },
 
+  // Do not drop bindings that are not declared in this file. ANTHROPIC_API_KEY
+  // is a secret set out of band (`make secret`), and a deploy that rebuilds the
+  // binding set from this config alone would delete it - which is exactly what
+  // the Workers Build kept doing, leaving a live Worker reporting "key is not
+  // set" until someone re-uploaded it.
+  "keep_vars": true,
+
   "observability": { "enabled": true }
 }

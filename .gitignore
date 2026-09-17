@@ -6,6 +6,10 @@
 .dev.vars.*
 *.pem
 
+# `/export` writes conversation transcripts into the repo root. They are logs,
+# not source, and this repository is public.
+/20??-??-??-*.txt
+
 .venv/
 __pycache__/
 *.egg-info/

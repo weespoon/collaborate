@@ -16,7 +16,11 @@
   //     wrangler secret put ANTHROPIC_API_KEY
   "vars": {
     "PROMPT_ID": "doodle",
-    "PROMPT_VERSION": "1"
+    "PROMPT_VERSION": "1",
+    // Ceiling on one call to the Claude API. Turns routinely run 20-60s and a
+    // busy drawing can run longer, so this is the "something is wrong" limit,
+    // not the expected duration. The browser gives up before this does.
+    "REQUEST_TIMEOUT_S": "240"
   },
 
   "observability": { "enabled": true }

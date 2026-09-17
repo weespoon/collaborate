@@ -12,8 +12,9 @@ Everything of substance is shared with local dev: `turn.run`, `prompts`,
 import asyncio
 import json
 import re
+import time
 
-from js import URL, AbortSignal, Object, Request, TextEncoder, TransformStream, fetch
+from js import URL, AbortSignal, Object, Request, TextEncoder, TransformStream, console, fetch
 from pyodide.ffi import to_js
 from workers import Response, WorkerEntrypoint
 
@@ -38,6 +39,70 @@ SAMPLE_NAME = re.compile(r"[A-Za-z0-9_-]+")
 
 def _js(obj):
     return to_js(obj, dict_converter=Object.fromEntries)
+
+
+def log(event: str, **fields) -> None:
+    """One structured line per lifecycle event, for Workers Logs.
+
+    `observability` is enabled in wrangler.jsonc, so anything written to the
+    console is queryable in the dashboard and visible in `wrangler tail`. A
+    turn is a 20-30s streaming call to someone else's API - when it fails, the
+    invocation record alone does not say why, so the interesting moments are
+    recorded here: how long until the model said anything, what it cost, and
+    what the failure was.
+
+    Never log the SVG itself or anything derived from the key.
+    """
+    console.log(json.dumps({"src": "collaborate", "event": event, **fields}, default=str))
+
+
+async def _instrument(events, started: float):
+    """Pass protocol events through untouched, logging the notable ones."""
+    first_thinking = None
+    thinking_chars = 0
+    try:
+        async for event in events:
+            kind = event.get("type")
+            if kind == "thinking":
+                thinking_chars += len(event.get("text", ""))
+                if first_thinking is None:
+                    first_thinking = round(time.monotonic() - started, 2)
+                    log("turn.first_thinking", after_s=first_thinking)
+            elif kind == "status":
+                log(
+                    "turn.status",
+                    phase=event.get("phase"),
+                    prompt=event.get("prompt"),
+                    model=event.get("model"),
+                )
+            elif kind == "warning":
+                log("turn.warning", message=event.get("message"))
+            elif kind == "error":
+                log(
+                    "turn.error",
+                    message=event.get("message"),
+                    after_s=round(time.monotonic() - started, 2),
+                    first_thinking_s=first_thinking,
+                )
+            elif kind == "done":
+                log(
+                    "turn.done",
+                    elapsed_s=event.get("elapsed_s"),
+                    first_thinking_s=first_thinking,
+                    thinking_chars=thinking_chars,
+                    strokes=event.get("strokes"),
+                    usage=event.get("usage"),
+                )
+            yield event
+    except Exception as exc:  # noqa: BLE001 - logged, then re-raised to the pump
+        log(
+            "turn.crash",
+            error=type(exc).__name__,
+            message=str(exc),
+            after_s=round(time.monotonic() - started, 2),
+            first_thinking_s=first_thinking,
+        )
+        raise
 
 
 def _json(payload, status: int = 200) -> Response:
@@ -77,6 +142,7 @@ def _sse(events) -> Response:
             async for event in events:
                 await writer.write(encoder.encode(_frame(event)))
         except Exception as exc:  # noqa: BLE001 - must reach the client as an event
+            log("stream.failed", error=type(exc).__name__, message=str(exc))
             await writer.write(
                 encoder.encode(
                     _frame({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
@@ -124,6 +190,7 @@ async def _health(env) -> dict:
         ),
     )
     if response.status != 200:
+        log("health.auth_failed", status=response.status)
         return {"ok": False, "auth": f"HTTP {response.status} from the Claude API"}
     return {"ok": True, "auth": "ok"}
 
@@ -177,13 +244,18 @@ class Default(WorkerEntrypoint):
                 return _json({"detail": "svg is required"}, status=422)
 
             version = data.get("version")
+            started = time.monotonic()
+            log("turn.start", svg_bytes=len(svg), timeout_s=settings.request_timeout_s)
             return _sse(
-                turn.run(
-                    settings,
-                    svg,
-                    prompt_id=data.get("prompt_id"),
-                    version=int(version) if version is not None else None,
-                    transport=post_sse,
+                _instrument(
+                    turn.run(
+                        settings,
+                        svg,
+                        prompt_id=data.get("prompt_id"),
+                        version=int(version) if version is not None else None,
+                        transport=post_sse,
+                    ),
+                    started,
                 )
             )
 

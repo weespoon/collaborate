@@ -61,6 +61,16 @@ function renderTranscripts() {
 }
 
 function sync() {
+  // An empty canvas has no history to belong to. Without this, undoing every
+  // stroke leaves the transcripts and the log from a drawing that no longer
+  // exists, and the next turn reads as a continuation of it.
+  if (!busy && editor.isEmpty() && transcripts.length > 0) {
+    transcripts = [];
+    renderTranscripts();
+    ui.log.textContent = '';
+    setStatus('idle');
+  }
+
   session.save(editor.serialize(), transcripts);
 
   const last = editor.lastKind();
@@ -84,6 +94,14 @@ function sync() {
 
 // -------------------------------------------------------------------- turn
 
+// A turn is a long streaming response from someone else's API. If it stalls -
+// the connection drops without closing, the Worker dies mid-stream - `read()`
+// never resolves and never rejects, so `busy` would stay true forever and the
+// Send button would never come back. These two watchdogs are what guarantee
+// the turn always ends, one way or another.
+const STALL_MS = 90_000; // no event of any kind for this long
+const LIMIT_MS = 300_000; // absolute ceiling on one turn
+
 async function send() {
   if (busy) return;
   busy = true;
@@ -92,6 +110,20 @@ async function send() {
   ui.log.textContent = '';
   setStatus('sending…', true);
   sync();
+
+  const controller = new AbortController();
+  let stalled = false;
+  let stallTimer;
+  const giveUp = (why) => {
+    stalled = true;
+    controller.abort(new DOMException(why, 'AbortError'));
+  };
+  const beat = () => {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => giveUp('stalled'), STALL_MS);
+  };
+  const limitTimer = setTimeout(() => giveUp('took too long'), LIMIT_MS);
+  beat();
 
   const outgoing = editor.serialize();
   let live = '';
@@ -109,24 +141,32 @@ async function send() {
       { svg: outgoing },
       {
         status: (event) => {
+          beat();
           setStatus(event.phase === 'sent' ? 'sent' : event.phase, true);
           if (event.prompt) ui.meta.textContent = `${event.prompt} · ${event.model}`;
         },
         thinking: (event) => {
+          beat();
           live += event.text;
           flush();
         },
-        warning: (event) => log(`warning: ${event.message}`, 'warn'),
+        warning: (event) => {
+          beat();
+          log(`warning: ${event.message}`, 'warn');
+        },
         svg: (event) => {
+          beat();
           editor.load(event.svg);
         },
         error: (event) => {
+          beat();
           log(`error: ${event.message}`, 'error');
           transcripts.splice(index, 1);
           renderTranscripts();
           setStatus('failed');
         },
         done: (event) => {
+          beat();
           const { ai, new_user: newUser } = event.strokes ?? {};
           log(`${event.elapsed_s}s · ${ai} strokes against your ${newUser}`);
           const cached = event.usage?.cache_read_input_tokens;
@@ -134,13 +174,19 @@ async function send() {
           setStatus('done');
         },
       },
+      { signal: controller.signal },
     );
   } catch (error) {
-    log(`error: ${error.message}`, 'error');
+    const message = stalled
+      ? `the turn ${error.message ?? 'stalled'} — nothing was drawn, try again`
+      : `error: ${error.message}`;
+    log(message, 'error');
     transcripts.splice(index, 1);
     renderTranscripts();
     setStatus('failed');
   } finally {
+    clearTimeout(stallTimer);
+    clearTimeout(limitTimer);
     busy = false;
     editor.setLocked(false);
     ui.canvas.classList.remove('busy');

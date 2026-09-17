@@ -8,10 +8,11 @@
  */
 
 /**
- * @param {{svg: string, promptId?: string, version?: number, signal?: AbortSignal}} request
+ * @param {{svg: string, promptId?: string, version?: number}} request
  * @param {Record<string, (event: object) => void>} handlers keyed by event type
+ * @param {{signal?: AbortSignal}} [options] aborting stops the read mid-stream
  */
-export async function takeTurn(request, handlers) {
+export async function takeTurn(request, handlers, options = {}) {
   const response = await fetch('/api/turn', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -20,7 +21,7 @@ export async function takeTurn(request, handlers) {
       prompt_id: request.promptId ?? null,
       version: request.version ?? null,
     }),
-    signal: request.signal,
+    signal: options.signal,
   });
 
   if (!response.ok || !response.body) {
@@ -30,6 +31,12 @@ export async function takeTurn(request, handlers) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+
+  // `reader.read()` rejects when the signal aborts, which is what stops a
+  // stalled turn; releasing the lock lets the body be cancelled cleanly.
+  options.signal?.addEventListener('abort', () => reader.cancel().catch(() => {}), {
+    once: true,
+  });
 
   for (;;) {
     const { value, done } = await reader.read();

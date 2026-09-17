@@ -334,6 +334,13 @@ The API key is a secret, set with `wrangler secret put` and never in the repo â€
 this is a public repository. Locally the same value lives in `backend/.env`
 (uvicorn) and `worker/.dev.vars` (pywrangler), both gitignored.
 
+## Conversations
+
+The Claude Code sessions that built this are kept verbatim in
+[conversations/](conversations/) â€” the reasoning behind the architecture, and
+what was tried and rejected along the way. See
+[conversations/README.md](conversations/README.md).
+
 ## Status
 
 Runs end to end both locally and as a Cloudflare Worker under Pyodide: draw,

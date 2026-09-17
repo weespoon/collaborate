@@ -336,10 +336,13 @@ this is a public repository. Locally the same value lives in `backend/.env`
 
 ## Conversations
 
-The Claude Code sessions that built this are kept verbatim in
+[conversations/design-rationale.md](conversations/design-rationale.md) is the
+short account of why this exists: the interface question it is poking at, the
+decisions the time budget made, and what it cost to build.
+
+The Claude Code sessions that built it are kept verbatim in
 [conversations/](conversations/) — the reasoning behind the architecture, and
-what was tried and rejected along the way. See
-[conversations/README.md](conversations/README.md).
+what was tried and rejected along the way.
 
 ## Status
 

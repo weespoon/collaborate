@@ -10,6 +10,10 @@ rejected.
 They are logs, not documentation. Where a log and the code disagree, the code
 is right — a log is a record of a moment, including the mistakes made in it.
 
+[design-rationale.md](design-rationale.md) is the short version of why this
+project exists and what the constraints chose for it. The logs below are the
+raw record.
+
 | Session | When | What it covers |
 |---|---|---|
 | [2026-09-17-1651-scaffold.md](2026-09-17-1651-scaffold.md) | 16:51–17:24 | Greenfield build: the spec, the FastAPI dev shell, the SVG.js frontend, `svgdoc` review rules, the first passing test suite. Includes tool calls and reasoning. |

@@ -7,7 +7,7 @@ PORT   ?= 8787
 ENV_FILE  := backend/.env
 ENV_FLAG  := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE),)
 
-.PHONY: setup dev test clean bundle wheel dist worker-dev deploy
+.PHONY: setup dev test clean bundle vendor dist worker-dev deploy
 
 ## Create the venv and install the backend in editable mode.
 setup:
@@ -30,14 +30,20 @@ test:
 
 ## Bake prompts and the sample list into a module for the Worker bundle.
 bundle:
-	$(BIN)/python tools/build_bundle.py
+	uv run --quiet --with pyyaml python tools/build_bundle.py
 
-## Build the shared package as a wheel. pywrangler installs into Pyodide with
-## --no-build, so the Worker consumes a wheel rather than the source tree.
-wheel: bundle
-	rm -rf backend/dist
-	uv build backend --wheel --out-dir backend/dist
-	cd worker && uv sync --reinstall-package collaborate
+## Copy the shared package into the Worker source tree. Cloudflare bundles every
+## .py file under the entrypoint's directory, so the Worker imports the same
+## modules the dev server does - no wheel, and no lock file pinning a hash that
+## changes on every backend edit. The dev shell and the httpx transport are
+## omitted: the Worker imports neither, and both need packages Pyodide lacks.
+vendor: bundle
+	rm -rf worker/src/collaborate
+	cp -R backend/src/collaborate worker/src/collaborate
+	rm -rf worker/src/collaborate/__pycache__
+	rm -f worker/src/collaborate/local_server.py \
+		worker/src/collaborate/transport_httpx.py
+	@echo "→ worker/src/collaborate ($$(ls worker/src/collaborate/*.py | wc -l | tr -d ' ') modules)"
 
 ## Assemble the static assets the Worker serves: frontend + sample SVGs.
 dist:
@@ -48,13 +54,13 @@ dist:
 	@echo "→ worker/public ($$(find worker/public -type f | wc -l | tr -d ' ') files)"
 
 ## Run the Worker locally under Pyodide, as Cloudflare will. Needs worker/.dev.vars.
-worker-dev: wheel dist
+worker-dev: vendor dist
 	cd worker && uv run pywrangler dev --port 8788
 
 ## Deploy to Cloudflare. Needs `wrangler login` and the ANTHROPIC_API_KEY secret.
-deploy: wheel dist
+deploy: vendor dist
 	cd worker && uv run pywrangler deploy
 
 clean:
-	rm -rf $(VENV) backend/src/*.egg-info worker/public backend/dist \
-		backend/src/collaborate/bundle.py
+	rm -rf $(VENV) backend/src/*.egg-info worker/public backend/dist backend/build \
+		worker/src/collaborate backend/src/collaborate/bundle.py

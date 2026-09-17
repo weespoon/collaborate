@@ -3,16 +3,12 @@ name = "collaborate-worker"
 version = "0.1.0"
 description = "Cloudflare Python Worker for collaborative doodling"
 requires-python = ">=3.13"
-# The shared backend package, with no extras: `collaborate` itself declares no
-# dependencies precisely so it can be bundled into Pyodide. httpx, PyYAML,
-# FastAPI and uvicorn live in its `local` extra and stay out of this bundle.
-dependencies = ["collaborate"]
+# No dependencies. The shared `collaborate` package is copied into src/ by
+# `make vendor` rather than installed as a wheel: it declares no dependencies
+# of its own, so there is nothing for a resolver to do, and a path-wheel
+# dependency would pin a hash that changes on every backend edit.
+dependencies = []
 
 [dependency-groups]
 dev = ["workers-py", "workers-runtime-sdk"]
 
-[tool.uv.sources]
-# A built wheel, not the source tree: pywrangler installs into the Pyodide
-# environment with --no-build, so a source distribution is rejected. `make
-# wheel` rebuilds it, and `make worker-dev` / `make deploy` depend on that.
-collaborate = { path = "../backend/dist/collaborate-0.1.0-py3-none-any.whl" }

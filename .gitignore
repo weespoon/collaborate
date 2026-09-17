@@ -18,8 +18,12 @@ backend/dist/
 backend/build/
 backend/src/collaborate/bundle.py
 
-# pywrangler's vendored Pyodide install and its virtualenv.
+# Copied in by `make vendor`; backend/src/collaborate is the original.
+worker/src/collaborate/
+
+# pywrangler's vendored Pyodide install, its virtualenv, and its generated lock.
 worker/python_modules/
 worker/.venv-workers/
+worker/pylock.toml
 node_modules/
 .DS_Store

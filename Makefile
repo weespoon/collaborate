@@ -62,9 +62,23 @@ dist:
 worker-dev: vendor dist
 	cd worker && uv run pywrangler dev --port 8788
 
-## Deploy to Cloudflare. Needs `wrangler login` and the ANTHROPIC_API_KEY secret.
+## Deploy to Cloudflare, then make sure the key is still bound.
+##
+## A local deploy keeps the secret; a Cloudflare Workers Build does not - it
+## rebuilds the Worker's bindings and ANTHROPIC_API_KEY, which lives outside
+## wrangler.jsonc, disappears. The Worker stays up and every route works except
+## the one that needs a key, so it looks like an app bug rather than a deploy
+## problem. This check makes the local path self-healing; a CI deploy still
+## needs `make secret` afterwards.
 deploy: vendor dist
 	cd worker && uv run pywrangler deploy
+	@if cd worker && npx --yes wrangler secret list 2>/dev/null \
+		| grep -q ANTHROPIC_API_KEY; then \
+		echo "→ ANTHROPIC_API_KEY still bound"; \
+	else \
+		echo "→ ANTHROPIC_API_KEY missing after deploy; restoring"; \
+		$(MAKE) --no-print-directory secret; \
+	fi
 
 ## Upload backend/.env's key as the Worker's secret. Idempotent - run it any
 ## time the deployed /api/health reports the key is not set. Piped via stdin so

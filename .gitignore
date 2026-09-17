@@ -20,6 +20,7 @@ backend/src/collaborate/bundle.py
 
 # Copied in by `make vendor`; backend/src/collaborate is the original.
 worker/src/collaborate/
+worker/src/.collaborate.tmp/
 
 # pywrangler's vendored Pyodide install, its virtualenv, and its generated lock.
 worker/python_modules/

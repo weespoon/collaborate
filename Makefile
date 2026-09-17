@@ -37,12 +37,17 @@ bundle:
 ## modules the dev server does - no wheel, and no lock file pinning a hash that
 ## changes on every backend edit. The dev shell and the httpx transport are
 ## omitted: the Worker imports neither, and both need packages Pyodide lacks.
+##
+## Staged then swapped, never built in place: `pywrangler dev` watches this tree
+## and will rebuild from a half-copied directory, crashing with a
+## ModuleNotFoundError for whichever module had not landed yet.
 vendor: bundle
-	rm -rf worker/src/collaborate
-	cp -R backend/src/collaborate worker/src/collaborate
-	rm -rf worker/src/collaborate/__pycache__
-	rm -f worker/src/collaborate/local_server.py \
-		worker/src/collaborate/transport_httpx.py
+	rm -rf worker/src/.collaborate.tmp worker/src/collaborate
+	cp -R backend/src/collaborate worker/src/.collaborate.tmp
+	rm -rf worker/src/.collaborate.tmp/__pycache__
+	rm -f worker/src/.collaborate.tmp/local_server.py \
+		worker/src/.collaborate.tmp/transport_httpx.py
+	mv worker/src/.collaborate.tmp worker/src/collaborate
 	@echo "→ worker/src/collaborate ($$(ls worker/src/collaborate/*.py | wc -l | tr -d ' ') modules)"
 
 ## Assemble the static assets the Worker serves: frontend + sample SVGs.

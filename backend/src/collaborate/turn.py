@@ -60,6 +60,8 @@ async def run(
                     thinking_seen = True
                     yield {"type": "status", "phase": "thinking"}
                 yield {"type": "thinking", "text": event.text}
+            elif isinstance(event, claude.TextProgress):
+                yield {"type": "progress", "chars": event.chars}
             elif isinstance(event, claude.Completed):
                 response_text = event.text
                 usage = event.usage

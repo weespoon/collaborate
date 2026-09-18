@@ -49,6 +49,11 @@ async def post_sse(
 
     reader = response.body.getReader()
     decoder = TextDecoder.new("utf-8")
+    # `stream: True` so a multi-byte character split across two network chunks
+    # is held back rather than mangled. Built once: `to_js` allocates a JS
+    # object every call, and this loop runs once per network chunk for the
+    # length of the turn.
+    stream_opts = _js({"stream": True})
     pending = ""  # decoded text not yet terminated by a newline
     data_lines: list[str] = []
 
@@ -56,12 +61,16 @@ async def post_sse(
         chunk = await reader.read()
         if chunk.done:
             break
-        # `stream: True` so a multi-byte character split across two network
-        # chunks is held back rather than mangled.
-        pending += decoder.decode(chunk.value, _js({"stream": True}))
+        pending += decoder.decode(chunk.value, stream_opts)
+        if "\n" not in pending:
+            continue
 
-        while "\n" in pending:
-            line, pending = pending.split("\n", 1)
+        # One split per chunk rather than one per line: `split("\n", 1)` in a
+        # loop recopies the whole remaining buffer each time round, which is
+        # quadratic in the chunk size for no reason.
+        *lines, pending = pending.split("\n")
+
+        for line in lines:
             line = line.rstrip("\r")
             if line.startswith("data:"):
                 data_lines.append(line[5:].lstrip())

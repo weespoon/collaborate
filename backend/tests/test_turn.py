@@ -159,3 +159,17 @@ def test_turn_without_a_key_reports_it(monkeypatch: pytest.MonkeyPatch) -> None:
     with TestClient(local_server.app) as client:
         response = client.post("/api/turn", json={"svg": BASE})
         assert "ANTHROPIC_API_KEY is not set" in response.text
+
+
+@pytest.mark.anyio
+async def test_buffered_drawing_phase_reports_progress(monkeypatch) -> None:
+    """The answer SVG is buffered, so without this the client sees dead air."""
+    chunk = "x" * claude.PROGRESS_EVERY_CHARS
+    events = await collect(
+        monkeypatch,
+        claude.TextProgress(len(chunk)),
+        claude.TextProgress(len(chunk) * 2),
+        claude.Completed(REPLY),
+    )
+    progress = [e for e in events if e["type"] == "progress"]
+    assert [e["chars"] for e in progress] == [len(chunk), len(chunk) * 2]

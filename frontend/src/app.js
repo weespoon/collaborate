@@ -99,8 +99,15 @@ function sync() {
 // never resolves and never rejects, so `busy` would stay true forever and the
 // Send button would never come back. These two watchdogs are what guarantee
 // the turn always ends, one way or another.
-const STALL_MS = 90_000; // no event of any kind for this long
-const LIMIT_MS = 300_000; // absolute ceiling on one turn
+//
+// They can afford to be patient now. The server emits `progress` while it
+// buffers the answer document, so silence means silence; previously the entire
+// drawing phase was silent and this timer was cutting off turns that were
+// working fine. The ceiling sits above REQUEST_TIMEOUT_S in wrangler.jsonc on
+// purpose - the server should give up first, because its failure arrives as an
+// `error` event that says what went wrong, and this one can only say "gave up".
+const STALL_MS = 120_000; // no event of any kind for this long
+const LIMIT_MS = 480_000; // absolute ceiling on one turn
 
 async function send() {
   if (busy) return;
@@ -126,6 +133,11 @@ async function send() {
   beat();
 
   const outgoing = editor.serialize();
+  // A stream can end without saying anything: when the Worker is killed
+  // mid-turn the body just stops, `read()` reports done, and `takeTurn`
+  // returns as if all were well. Without this the run would be reported as a
+  // success that drew nothing.
+  let settled = false;
   let live = '';
   const index = transcripts.length;
   transcripts.push('');
@@ -150,16 +162,23 @@ async function send() {
           live += event.text;
           flush();
         },
+        progress: (event) => {
+          beat();
+          const kb = Math.round(event.chars / 1024);
+          setStatus(kb > 0 ? `drawing… ${kb}kb` : 'drawing…', true);
+        },
         warning: (event) => {
           beat();
           log(`warning: ${event.message}`, 'warn');
         },
         svg: (event) => {
           beat();
+          settled = true;
           editor.load(event.svg);
         },
         error: (event) => {
           beat();
+          settled = true;
           log(`error: ${event.message}`, 'error');
           transcripts.splice(index, 1);
           renderTranscripts();
@@ -176,6 +195,16 @@ async function send() {
       },
       { signal: controller.signal },
     );
+    if (!settled) {
+      log(
+        'the turn ended without a drawing — the server stopped mid-stream, ' +
+          'nothing was changed, try again',
+        'error',
+      );
+      transcripts.splice(index, 1);
+      renderTranscripts();
+      setStatus('failed');
+    }
   } catch (error) {
     const message = stalled
       ? `the turn ${error.message ?? 'stalled'} — nothing was drawn, try again`

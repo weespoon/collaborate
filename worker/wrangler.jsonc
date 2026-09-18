@@ -19,9 +19,21 @@
     "PROMPT_VERSION": "1",
     // Ceiling on one call to the Claude API. Turns routinely run 20-60s and a
     // busy drawing can run longer, so this is the "something is wrong" limit,
-    // not the expected duration. The browser gives up before this does.
-    "REQUEST_TIMEOUT_S": "240"
+    // not the expected duration. Kept below the browser's LIMIT_MS in app.js,
+    // so a turn that runs away is ended here, where the client is told why,
+    // rather than by the client giving up on a stream that says nothing.
+    "REQUEST_TIMEOUT_S": "420"
   },
+
+  // A turn is mostly spent waiting on the Claude API, but the Python side is
+  // not free: every SSE delta is decoded, JSON-parsed and re-framed in Pyodide,
+  // and that adds up across a long turn. Going over the default ceiling does
+  // not just fail the request - it kills the isolate mid-interpreter, and every
+  // request routed there afterwards dies with "Attempted to use PyProxy when
+  // Python GIL not held" until it is recycled. One slow turn took out
+  // /api/health for minutes at a time. This is the backstop; the real fix was
+  // sending far less path data in the first place.
+  "limits": { "cpu_ms": 120000 },
 
   "observability": { "enabled": true }
 }

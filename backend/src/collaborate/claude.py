@@ -23,6 +23,11 @@ from .prompts import Prompt
 
 REFUSAL_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
+# How much answer has to arrive between progress events. Small enough that
+# the client's stall watchdog keeps getting fed, large enough that a long
+# document costs a handful of frames rather than one per token.
+PROGRESS_EVERY_CHARS = 2000
+
 
 class ClaudeError(RuntimeError):
     """A call that never produced a usable turn."""
@@ -39,13 +44,26 @@ class TextDelta:
 
 
 @dataclass
+class TextProgress:
+    """How much of the document has arrived.
+
+    The answer SVG is buffered, never streamed on (half a `<path>` is a
+    rendering glitch, not a drawing), so from the outside the last third of a
+    turn looks identical to a dead connection. This is the only sign of life
+    during it - it carries a count, not the text.
+    """
+
+    chars: int
+
+
+@dataclass
 class Completed:
     text: str
     stop_reason: str | None = None
     usage: dict[str, Any] = field(default_factory=dict)
 
 
-ClaudeEvent = ThinkingDelta | TextDelta | Completed
+ClaudeEvent = ThinkingDelta | TextDelta | TextProgress | Completed
 
 
 def build_request(settings: Settings, prompt: Prompt, svg: str) -> dict[str, Any]:
@@ -114,6 +132,8 @@ async def stream_turn(
 ) -> AsyncIterator[ClaudeEvent]:
     """Run one turn, yielding reasoning as it arrives and the SVG at the end."""
     text_parts: list[str] = []
+    text_chars = 0
+    reported_chars = 0
     stop_reason: str | None = None
     usage: dict[str, Any] = {}
 
@@ -135,9 +155,14 @@ async def stream_turn(
                     yield ThinkingDelta(chunk)
             elif delta.get("type") == "text_delta":
                 # Buffered, never streamed on: half a <path> is a rendering
-                # glitch, not a drawing.
+                # glitch, not a drawing. A count goes out periodically so the
+                # client can tell "still drawing" from "connection died".
                 if chunk := delta.get("text"):
                     text_parts.append(chunk)
+                    text_chars += len(chunk)
+                    if text_chars - reported_chars >= PROGRESS_EVERY_CHARS:
+                        reported_chars = text_chars
+                        yield TextProgress(text_chars)
 
         elif kind == "message_start":
             usage.update((event.get("message") or {}).get("usage") or {})

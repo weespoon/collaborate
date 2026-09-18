@@ -20,6 +20,16 @@ LAYER_GREY = "#8a8a8a"
 AI_TURN_ID = re.compile(r"^ai-turn-(\d+)$")
 _SUBPATH = re.compile(r"[Mm]")
 _HEX = re.compile(r"^#([0-9a-f]{3}|[0-9a-f]{6})$", re.I)
+
+# Coordinate precision, matched to the editor's. The model is not told about
+# this - asking it to count decimals spends reasoning on something a regex
+# does perfectly - so its output is renormalised here instead.
+PRECISION = 3
+_GEOMETRY_ATTR = re.compile(
+    r'\b(d|points|x|y|x1|y1|x2|y2|cx|cy|r|rx|ry|width|height)\s*=\s*"([^"]*)"'
+)
+# Only decimals; integers are already as short as they go.
+_DECIMAL = re.compile(r"-?\d*\.\d+")
 _RGB = re.compile(r"^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$", re.I)
 
 
@@ -57,6 +67,28 @@ def extract_document(text: str) -> str:
     if start == -1 or end == -1:
         raise InvalidSVG("no <svg> element in the response")
     return text[start : end + len("</svg>")]
+
+
+def clamp_precision(svg: str, places: int = PRECISION) -> str:
+    """Round every decimal in a geometry attribute to `places`.
+
+    A model asked to reproduce a document tends to hand back coordinates at
+    whatever precision it feels like, and those digits are pure cost: they go
+    back out in the next turn's prompt and come back again in its response.
+    Colors, ids and anything else are left alone.
+    """
+
+    def shorten(match: re.Match[str]) -> str:
+        value = round(float(match.group()), places)
+        # `repr` of a float keeps the shortest round-tripping form, but we want
+        # 12.0 to print as 12, not 12.0.
+        return f"{value:.{places}f}".rstrip("0").rstrip(".") or "0"
+
+    def rewrite(match: re.Match[str]) -> str:
+        name, value = match.group(1), match.group(2)
+        return f'{name}="{_DECIMAL.sub(shorten, value)}"'
+
+    return _GEOMETRY_ATTR.sub(rewrite, svg)
 
 
 def parse(svg: str) -> ET.Element:
@@ -157,6 +189,10 @@ def review(input_svg: str, response_text: str) -> Review:
         result.warnings.append(
             "Response had text around the SVG; the prompt asks for the document alone."
         )
+    # Renormalise before anything reads the document, so the preservation
+    # check below compares like with like: the input arrived at this precision
+    # already, so rounding only ever touches digits the model invented.
+    body = clamp_precision(body)
     result.svg = body
 
     out_root = parse(body)

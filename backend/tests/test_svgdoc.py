@@ -123,3 +123,30 @@ def test_prompt_loads_with_its_defaults() -> None:
 def test_prompt_id_cannot_escape_the_prompts_directory() -> None:
     with pytest.raises(ValueError):
         prompts.load("../../etc", 1)
+
+
+def test_precision_is_clamped_on_the_way_back() -> None:
+    base = sample("t01")
+    layer = """  <g id="ai-turn-1" fill="none" stroke="#8a8a8a">
+    <path d="M 10.123456789 20.5 C 30.98765 40.000001 50 60.1239"/>
+  </g>"""
+    result = svgdoc.review(base, reply(base, layer))
+    assert result.ok
+    assert 'd="M 10.123 20.5 C 30.988 40 50 60.124"' in result.svg
+
+
+def test_clamping_leaves_everything_that_is_not_geometry_alone() -> None:
+    marked_up = '<path d="M 1.00005 2" stroke="#8a8a8a" id="turn-1.5" opacity="0.55555"/>'
+    clamped = svgdoc.clamp_precision(marked_up)
+    assert 'd="M 1 2"' in clamped
+    assert 'stroke="#8a8a8a"' in clamped
+    assert 'id="turn-1.5"' in clamped
+    assert 'opacity="0.55555"' in clamped
+
+
+def test_clamping_does_not_trip_the_preservation_check() -> None:
+    """The input is already at this precision, so rounding is a no-op on it."""
+    base = sample("t01")
+    result = svgdoc.review(base, reply(base, GOOD_LAYER))
+    assert result.ok
+    assert not any("modified or reordered" in w for w in result.warnings)

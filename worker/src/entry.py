@@ -16,6 +16,7 @@ import time
 
 from js import URL, AbortSignal, Object, Request, TextEncoder, TransformStream, console, fetch
 from pyodide.ffi import to_js
+import workers
 from workers import Response, WorkerEntrypoint
 
 from collaborate import claude, prompts, turn
@@ -126,32 +127,90 @@ def _frame(event: dict) -> str:
     return f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
 
 
+# Events that mean something to the UI go out the moment they exist. Everything
+# else - the thinking stream, which arrives token by token - is batched to this
+# many bytes first. Each write is a Python->JS crossing, and at one crossing per
+# token a long turn spends more CPU shuttling frames than doing anything else.
+FLUSH_AT_BYTES = 512
+IMMEDIATE = frozenset({"status", "svg", "done", "error", "warning", "progress"})
+
+
+# Strong references to in-flight pump tasks; see `_sse`.
+_PUMPS: set = set()
+
+
 def _sse(events) -> Response:
     """Wrap an async iterator of protocol events in a streaming Response.
 
     The local server hands the identical generator to Starlette's
     `StreamingResponse`; here it is a `TransformStream` whose writer is pumped
-    by a task that outlives this function's return.
+    by a task registered with `waitUntil`.
+
+    Three things about that task are load-bearing, and it previously had none
+    of them:
+
+    * it is held in `_PUMPS` until it finishes. `ensure_future` returns the
+      only strong reference to a task, and asyncio itself keeps just a weak
+      one - drop it and the pump can be collected mid-stream, which ends the
+      response body early and silently. The client sees Claude's reasoning
+      arrive and then no drawing.
+    * it is handed to `waitUntil`, so the runtime counts it as part of this
+      request. Left detached, it outlives the response, and the next request
+      routed to the same isolate fails with "Cannot enter a promising task
+      from inside another running promising task".
+    * its exceptions are logged rather than discarded.
     """
     stream = TransformStream.new()
     writer = stream.writable.getWriter()
     encoder = TextEncoder.new()
 
     async def pump():
+        buffer: list[str] = []
+        size = 0
+
+        async def flush():
+            nonlocal size
+            if not buffer:
+                return
+            payload = "".join(buffer)
+            buffer.clear()
+            size = 0
+            await writer.write(encoder.encode(payload))
+
         try:
             async for event in events:
-                await writer.write(encoder.encode(_frame(event)))
+                frame = _frame(event)
+                buffer.append(frame)
+                size += len(frame)
+                if size >= FLUSH_AT_BYTES or event.get("type") in IMMEDIATE:
+                    await flush()
+            await flush()
         except Exception as exc:  # noqa: BLE001 - must reach the client as an event
             log("stream.failed", error=type(exc).__name__, message=str(exc))
-            await writer.write(
-                encoder.encode(
-                    _frame({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
-                )
+            buffer.append(
+                _frame({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
             )
+            try:
+                await flush()
+            except Exception:  # noqa: BLE001 - the socket is already gone
+                pass
         finally:
             await writer.close()
 
-    asyncio.ensure_future(pump())
+    task = asyncio.ensure_future(pump())
+    _PUMPS.add(task)
+
+    def _finished(finished):
+        _PUMPS.discard(finished)
+        if not finished.cancelled() and finished.exception() is not None:
+            log("stream.pump_failed", message=str(finished.exception()))
+
+    task.add_done_callback(_finished)
+    # Resolved here rather than imported at module scope: `workers`
+    # exposes it through a module `__getattr__` that reaches into the
+    # `cloudflare:workers` JS module, which is not something to do while
+    # this module is still being evaluated.
+    workers.wait_until(task)
 
     return Response(
         stream.readable,

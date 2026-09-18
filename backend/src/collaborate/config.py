@@ -49,8 +49,9 @@ class Settings:
     default_prompt_id: str = "doodle"
     default_prompt_version: int = 1
     # Wall-clock ceiling for one turn. Turns take 20-30s; this is the "something
-    # is wrong" limit, not the expected duration.
-    request_timeout_s: float = 180.0
+    # is wrong" limit, not the expected duration. Matches the deployed default
+    # in wrangler.jsonc so a turn behaves the same locally and on the Worker.
+    request_timeout_s: float = 420.0
     # Opt-in server-side refusal fallback. A doodle prompt is very unlikely to
     # trip a safety classifier, and this adds a beta header to the request, so
     # it's off until someone has a reason to turn it on. Refusal *handling*
@@ -74,7 +75,7 @@ class Settings:
             api_key=key,
             default_prompt_id=env.get("PROMPT_ID", "doodle"),
             default_prompt_version=int(env.get("PROMPT_VERSION", "1")),
-            request_timeout_s=float(env.get("REQUEST_TIMEOUT_S", "180")),
+            request_timeout_s=float(env.get("REQUEST_TIMEOUT_S", "420")),
             refusal_fallback=env.get("REFUSAL_FALLBACK", "").lower()
             in ("1", "true", "yes"),
         )

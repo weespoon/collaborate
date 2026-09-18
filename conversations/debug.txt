@@ -1,0 +1,1421 @@
+▗ ▗   ▖ ▖  Claude Code v2.1.275
+           Opus 5 · Claude Max
+  ▘▘ ▝▝    ~/code/collaborate
+
+  Fable 5.1 writes better code and reports progress on long tasks. Switch anytime with /model.
+
+❯ I am testing collaborative doodling, 1 need more aggressive smoothing for     
+  user as hand wiggles add too much complexity, second getting GIL lock here    
+  are server logs /Users/eric/Downloads/logs-2026-09-18T02_24_13.493Z.json      
+
+⏺ I'll look at the project and the logs.
+
+  Searched for 1 pattern, read 5 files, listed 1 directory, ran 5 shell commands (ctrl+o to expand)
+
+❯ Also need a longer timeout, as it times out regularly.                        
+
+  Read 1 file, ran 3 shell commands (ctrl+o to expand)
+
+❯ The send to claude button turns back to green, and some thinking text has     
+  been returned, but drawing never shows up                                     
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I've found it — and the three symptoms are one causal chain. Let me show you
+  the evidence before I change anything.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+❯ Also maybe we should clamp the number of floating point place values to 3     
+  sending, we can clean up AI's on return trip, don't need to change the        
+  prompt.                                                                       
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The logs are unambiguous. Every poisoned burst follows a CPU-KILL on /api/turn
+  — and the poisoned requests are /api/health, /api/prompts, /api/samples,
+  which burn 0ms CPU. They can't be at fault. The GIL error is not your bug;
+  it's the wreckage left after Cloudflare kills the isolate
+  mid-Python-execution.
+
+  Let me fix all of it. Starting with smoothing:
+
+⏺ Bash(cat > /tmp/claude-501/-Users-eric-code-collaborate/798e027a-2779-42b8-92d
+      5-667d6c2dd27d/scratchpad/ed_head.py <<'PYEOF'
+      import re, pathlib…)
+  ⎿  ok
+     /**
+      * The drawing surface: pointer events in, one SVG document out.
+     … +29 lines (ctrl+o to expand)
+  ⎿  Updated frontend/src/editor.js (+79 -28)
+       17    'stroke-linejoin': 'round',
+       18  };
+       19  
+       20 -// Pointer events fire far denser than a drawing needs. Droppi
+          -ng samples closer                                             
+       21 -// than this keeps path data small — it's sent to the model on
+          - every turn.                                                  
+       22 -const MIN_SAMPLE_DISTANCE = 2.5;                              
+       23 -                                                              
+       24 -const round = (n) => Math.round(n * 1000) / 1000;             
+       25 -                                                              
+       26 -/** Catmull-Rom through the sampled points, emitted as cubic b
+          -eziers. */                                                    
+       27 -function toPathData(points) {                                 
+       28 -  if (points.length === 0) return '';                         
+       29 -  const [first] = points;                                     
+       30 -  if (points.length === 1) {                                  
+       31 -    // A tap is a dot: a hair of a segment under a round linec
+          -ap.                                                           
+       32 -    return `M ${round(first.x)} ${round(first.y)} l 0.01 0`;  
+       20 +// -----------------------------------------------------------
+          +---- smoothing                                                
+       21 +//                                                            
+       22 +// A hand wiggles. Raw pointer samples carry that tremor at fu
+          +ll amplitude, and                                             
+       23 +// every wiggle becomes another cubic segment in the `d` attri
+          +bute — which is                                               
+       24 +// sent to the model, re-emitted by it, and sent again next tu
+          +rn. Path bytes are                                            
+       25 +// the single biggest cost driver in this app, so the pen is f
+          +iltered in three                                              
+       26 +// stages before it becomes path data.                        
+       27 +                                                              
+       28 +// 1. Drop samples closer together than this. Pointer events f
+          +ire far denser                                                
+       29 +//    than a drawing needs; this is the cheap first cut.      
+       30 +const MIN_SAMPLE_DISTANCE = 3.5;                              
+       31 +                                                              
+       32 +// 2. Exponential moving average over the sampled points — the
+          + tremor filter.                                               
+       33 +//    0 is no smoothing, 1 never moves. Raise it if hands stil
+          +l read as shaky;                                              
+       34 +//    past ~0.7 corners start rounding off visibly.           
+       35 +const SMOOTHING = 0.45;                                       
+       36 +                                                              
+       37 +// 3. Ramer-Douglas-Peucker: throw away points the curve doesn
+          +'t need. In user                                              
+       38 +//    units on a 512 viewBox, so ~0.2% of the canvas — below w
+          +hat you can see,                                              
+       39 +//    and it typically removes half the points on anything but
+          + a tight scribble.                                            
+       40 +const SIMPLIFY_TOLERANCE = 1.0;                               
+       41 +                                                              
+       42 +// Coordinates are clamped to this many decimals everywhere th
+          +ey're written.                                                
+       43 +// A 512 viewBox rendered at 512px makes the 4th decimal a ten
+          +-thousandth of a                                              
+     … 76 more lines (ctrl+o to expand)
+
+⏺ I dropped toPathData in that replacement — restoring it, plus wiring the
+  pipeline into the pointer handlers:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     syntax check:
+  ⎿  Updated frontend/src/editor.js (+42 -2)
+      101    return points.filter((_, i) => keep[i]);
+      102  }
+      103  
+      104 +/** Catmull-Rom through the points, emitted as cubic beziers. 
+          +*/                                                            
+      105 +function toPathData(points) {                                 
+      106 +  if (points.length === 0) return '';                         
+      107 +  const [first] = points;                                     
+      108 +  if (points.length === 1) {                                  
+      109 +    // A tap is a dot: a hair of a segment under a round linec
+          +ap.                                                           
+      110 +    return `M ${round(first.x)} ${round(first.y)} l 0.01 0`;  
+      111 +  }                                                           
+      112 +                                                              
+      113 +  const d = [`M ${round(first.x)} ${round(first.y)}`];        
+      114 +  for (let i = 0; i < points.length - 1; i += 1) {            
+      115 +    const p0 = points[i - 1] ?? points[i];                    
+      116 +    const p1 = points[i];                                     
+      117 +    const p2 = points[i + 1];                                 
+      118 +    const p3 = points[i + 2] ?? p2;                           
+      119 +    const c1x = p1.x + (p2.x - p0.x) / 6;                     
+      120 +    const c1y = p1.y + (p2.y - p0.y) / 6;                     
+      121 +    const c2x = p2.x - (p3.x - p1.x) / 6;                     
+      122 +    const c2y = p2.y - (p3.y - p1.y) / 6;                     
+      123 +    d.push(                                                   
+      124 +      `C ${round(c1x)} ${round(c1y)} ${round(c2x)} ${round(c2y
+          +)} ` +                                                        
+      125 +        `${round(p2.x)} ${round(p2.y)}`,                      
+      126 +    );                                                        
+      127 +  }                                                           
+      128 +  return d.join(' ');                                         
+      129 +}                                                             
+      130 +                                                              
+      131 +/**                                                           
+      132 + * The pen pipeline, in one place so the preview and the commi
+          +tted stroke can                                               
+      133 + * only ever differ by the stage that is deliberately skipped 
+          +below.                                                        
+      134 + */                                                           
+      135 +function strokePath(points, { simplified }) {                 
+      136 +  const smoothed = smooth(points);                            
+      137 +  return toPathData(                                          
+      138 +    simplified ? simplify(smoothed, SIMPLIFY_TOLERANCE) : smoo
+          +thed,                                                         
+      139 +  );                                                          
+      140 +}                                                             
+     … 20 more lines (ctrl+o to expand)
+
+⏺ Now the 3-decimal clamp on send — applied in the serializer so it covers
+  samples and Claude's returned marks too, not just freshly drawn strokes:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     syntax ok
+  ⎿  Updated frontend/src/editor.js (+36 -1)
+      141  
+      142  const DROP_ATTR = /^(xmlns:svgjs|svgjs:|xmlns$)/;
+      143  
+      144 +// Attributes whose values are pure geometry, safe to renumber
+          +. Anything else                                               
+      145 +// (colors, ids, viewBox) is copied through untouched.        
+      146 +const GEOMETRY_ATTR = new Set([                               
+      147 +  'd',                                                        
+      148 +  'points',                                                   
+      149 +  'x',                                                        
+      150 +  'y',                                                        
+      151 +  'x1',                                                       
+      152 +  'y1',                                                       
+      153 +  'x2',                                                       
+      154 +  'y2',                                                       
+      155 +  'cx',                                                       
+      156 +  'cy',                                                       
+      157 +  'r',                                                        
+      158 +  'rx',                                                       
+      159 +  'ry',                                                       
+      160 +  'width',                                                    
+      161 +  'height',                                                   
+      162 +]);                                                           
+      163 +                                                              
+      164 +// Only decimals are matched, so integers are left exactly as 
+          +written.                                                      
+      165 +const DECIMAL = /-?\d*\.\d+/g;                                
+      166 +                                                              
+      167 +/**                                                           
+      168 + * Clamp every decimal in a geometry attribute to PRECISION pl
+          +aces.                                                         
+      169 + *                                                            
+      170 + * Strokes this editor drew are already rounded, but a sample 
+          +file or a layer                                               
+      171 + * Claude just returned can carry any precision at all, and `s
+          +erialize` is the                                              
+      172 + * one place every document passes through on its way to the w
+          +ire.                                                          
+      173 + */                                                           
+      174 +function clampPrecision(name, value) {                        
+      175 +  if (!GEOMETRY_ATTR.has(name)) return value;                 
+      176 +  return value.replace(DECIMAL, (match) => String(round(Number
+          +(match))));                                                   
+      177 +}                                                             
+      178 +                                                              
+      179  function escapeAttr(value) {
+      180    return value
+     … 9 more lines (ctrl+o to expand)
+
+⏺ Let me measure what the smoothing actually buys on a wiggly stroke:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ 86.7% smaller on a tremor-heavy stroke. That's the multiplier on everything
+  downstream. Now the return trip — cleaning up Claude's coordinates without
+  touching the prompt:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     <path d="M 1.235 2.5 C 4 4 5 6.123" stroke="#8a8a8a" id="a1.5"/>
+  ⎿  Updated backend/src/collaborate/svgdoc.py (+36 -0)
+      20  AI_TURN_ID = re.compile(r"^ai-turn-(\d+)$")
+      21  _SUBPATH = re.compile(r"[Mm]")
+      22  _HEX = re.compile(r"^#([0-9a-f]{3}|[0-9a-f]{6})$", re.I)
+      23 +                                                               
+      24 +# Coordinate precision, matched to the editor's. The model is n
+         +ot told about                                                  
+      25 +# this - asking it to count decimals spends reasoning on someth
+         +ing a regex                                                    
+      26 +# does perfectly - so its output is renormalised here instead. 
+      27 +PRECISION = 3                                                  
+      28 +_GEOMETRY_ATTR = re.compile(                                   
+      29 +    r'\b(d|points|x|y|x1|y1|x2|y2|cx|cy|r|rx|ry|width|height)\s
+         +*=\s*"([^"]*)"'                                                
+      30 +)                                                              
+      31 +# Only decimals; integers are already as short as they go.     
+      32 +_DECIMAL = re.compile(r"-?\d*\.\d+")                           
+      33  _RGB = re.compile(r"^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)
+          $", re.I)
+      34  
+      35  
+     ...
+      69      return text[start : end + len("</svg>")]
+      70  
+      71  
+      72 +def clamp_precision(svg: str, places: int = PRECISION) -> str: 
+      73 +    """Round every decimal in a geometry attribute to `places`.
+      74 +                                                               
+      75 +    A model asked to reproduce a document tends to hand back co
+         +ordinates at                                                   
+      76 +    whatever precision it feels like, and those digits are pure
+         + cost: they go                                                 
+      77 +    back out in the next turn's prompt and come back again in i
+         +ts response.                                                   
+      78 +    Colors, ids and anything else are left alone.              
+      79 +    """                                                        
+      80 +                                                               
+      81 +    def shorten(match: re.Match[str]) -> str:                  
+      82 +        value = round(float(match.group()), places)            
+      83 +        # `repr` of a float keeps the shortest round-tripping f
+         +orm, but we want                                               
+      84 +        # 12.0 to print as 12, not 12.0.                       
+      85 +        return f"{value:.{places}f}".rstrip("0").rstrip(".") or
+         + "0"                                                           
+      86 +                                                               
+      87 +    def rewrite(match: re.Match[str]) -> str:                  
+      88 +        name, value = match.group(1), match.group(2)           
+      89 +        return f'{name}="{_DECIMAL.sub(shorten, value)}"'      
+      90 +                                                               
+      91 +    return _GEOMETRY_ATTR.sub(rewrite, svg)                    
+      92 +                                                               
+     … 14 more lines (ctrl+o to expand)
+
+⏺ Now the silent-phase heartbeat — this is what's tripping your 90s stall
+  watchdog:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ That failure is my system python3 (3.9), not the code — the project has its
+  own venv:
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+⏺ Now the Worker. The detached pump() task is the second real bug — it outlives
+  the request the runtime knows about:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok; asyncio referenced: True
+     18:from workers import Response, WorkerEntrypoint, wait_until
+     132:FLUSH_AT_BYTES = 512
+     … +5 lines (ctrl+o to expand)
+  ⎿  Updated worker/src/entry.py (+42 -9)
+       9  `transport_fetch.py` are the only Worker-specific code.
+      10  """
+      11  
+      12 -import asyncio                                                 
+      12  import json
+      13  import re
+      14  import time
+      15  
+      16  from js import URL, AbortSignal, Object, Request, TextEncoder, 
+          TransformStream, console, fetch
+      17  from pyodide.ffi import to_js
+      19 -from workers import Response, WorkerEntrypoint                 
+      18 +from workers import Response, WorkerEntrypoint, wait_until     
+      19  
+      20  from collaborate import claude, prompts, turn
+      21  from collaborate.bundle import SAMPLES
+     ...
+      125      return f"data: {json.dumps(event, separators=(',', ':'))}\
+           n\n"
+      126  
+      127  
+      128 +# Events that mean something to the UI go out the moment they 
+          +exist. Everything                                             
+      129 +# else - the thinking stream, which arrives token by token - i
+          +s batched to this                                             
+      130 +# many bytes first. Each write is a Python->JS crossing, and a
+          +t one crossing per                                            
+      131 +# token a long turn spends more CPU shuttling frames than doin
+          +g anything else.                                              
+      132 +FLUSH_AT_BYTES = 512                                          
+      133 +IMMEDIATE = frozenset({"status", "svg", "done", "error", "warn
+          +ing", "progress"})                                            
+      134 +                                                              
+      135 +                                                              
+      136  def _sse(events) -> Response:
+      137      """Wrap an async iterator of protocol events in a streamin
+           g Response.
+      138  
+      139      The local server hands the identical generator to Starlett
+           e's
+      140      `StreamingResponse`; here it is a `TransformStream` whose 
+           writer is pumped
+      134 -    by a task that outlives this function's return.           
+      141 +    by a task registered with `waitUntil`.                    
+      142 +                                                              
+      143 +    That registration matters. A bare `asyncio.ensure_future` 
+          +leaves a Python                                               
+      144 +    task running that the Workers runtime knows nothing about:
+          + it keeps a frame                                             
+      145 +    alive past the response, and the next request routed to th
+          +e same isolate                                                
+      146 +    fails with "Cannot enter a promising task from inside anot
+          +her running                                                   
+      147 +    promising task". `waitUntil` makes the task part of the re
+          +quest's lifetime,                                             
+      148 +    which is what it always was in fact.                      
+     … 48 more lines (ctrl+o to expand)
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+         reader = response.body.getReader()
+         decoder = TextDecoder.new("utf-8")
+     … +34 lines (ctrl+o to expand)
+  ⎿  Updated worker/src/transport_fetch.py (+14 -5)
+      49  
+      50      reader = response.body.getReader()
+      51      decoder = TextDecoder.new("utf-8")
+      52 +    # `stream: True` so a multi-byte character split across two
+         + network chunks                                                
+      53 +    # is held back rather than mangled. Built once: `to_js` all
+         +ocates a JS                                                    
+      54 +    # object every call, and this loop runs once per network ch
+         +unk for the                                                    
+      55 +    # length of the turn.                                      
+      56 +    stream_opts = _js({"stream": True})                        
+      57      pending = ""  # decoded text not yet terminated by a newlin
+          e
+      58      data_lines: list[str] = []
+      59  
+     ...
+      61          chunk = await reader.read()
+      62          if chunk.done:
+      63              break
+      59 -        # `stream: True` so a multi-byte character split across
+         - two network                                                   
+      60 -        # chunks is held back rather than mangled.             
+      61 -        pending += decoder.decode(chunk.value, _js({"stream": T
+         -rue}))                                                         
+      64 +        pending += decoder.decode(chunk.value, stream_opts)    
+      65 +        if "\n" not in pending:                                
+      66 +            continue                                           
+      67  
+      63 -        while "\n" in pending:                                 
+      64 -            line, pending = pending.split("\n", 1)             
+      68 +        # One split per chunk rather than one per line: `split(
+         +"\n", 1)` in a                                                 
+      69 +        # loop recopies the whole remaining buffer each time ro
+         +und, which is                                                  
+      70 +        # quadratic in the chunk size for no reason.           
+      71 +        *lines, pending = pending.split("\n")                  
+      72 +                                                               
+      73 +        for line in lines:                                     
+      74              line = line.rstrip("\r")
+      75              if line.startswith("data:"):
+      76                  data_lines.append(line[5:].lstrip())
+
+⏺ Now the client side — this is your "button goes green, thinking text, no
+  drawing" bug:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     app.js syntax ok
+  ⎿  Updated frontend/src/app.js (+30 -2)
+       99  // never resolves and never rejects, so `busy` would stay true
+            forever and the
+      100  // Send button would never come back. These two watchdogs are 
+           what guarantee
+      101  // the turn always ends, one way or another.
+      102 -const STALL_MS = 90_000; // no event of any kind for this long
+      103 -const LIMIT_MS = 300_000; // absolute ceiling on one turn     
+      102 +// The server emits `progress` while it buffers the answer doc
+          +ument, so silence                                             
+      103 +// now genuinely means silence - before that, the whole drawin
+          +g phase looked                                                
+      104 +// like a stall and long turns were being killed by this timer
+          + while they were                                              
+      105 +// working fine. The ceiling sits above REQUEST_TIMEOUT_S in w
+          +rangler.jsonc on                                              
+      106 +// purpose: the server should give up first, because its failu
+          +re arrives as an                                              
+      107 +// `error` event that says what went wrong, and this one can o
+          +nly say "gave up".                                            
+      108 +const STALL_MS = 120_000; // no event of any kind for this lon
+          +g                                                             
+      109 +const LIMIT_MS = 480_000; // absolute ceiling on one turn     
+      110  
+      111  async function send() {
+      112    if (busy) return;
+     ...
+      132    beat();
+      133  
+      134    const outgoing = editor.serialize();
+      135 +  // A stream can end without saying anything: when the Worker
+          + is killed                                                    
+      136 +  // mid-turn the body just stops, `read()` reports done, and 
+          +`takeTurn`                                                    
+      137 +  // returns as if all were well. Without this the run would b
+          +e reported as a                                               
+      138 +  // success that drew nothing.                               
+      139 +  let settled = false;                                        
+      140    let live = '';
+      141    const index = transcripts.length;
+      142    transcripts.push('');
+     ...
+      161            live += event.text;
+      162            flush();
+      163          },
+      164 +        progress: (event) => {                                
+      165 +          beat();                                             
+      166 +          const kb = Math.round(event.chars / 1024);          
+      167 +          setStatus(kb > 0 ? `drawing… ${kb}kb` : 'drawing…', 
+          +true);                                                        
+      168 +        },                                                    
+      169          warning: (event) => {
+      170            beat();
+      171            log(`warning: ${event.message}`, 'warn');
+      172          },
+      173          svg: (event) => {
+     … 26 more lines (ctrl+o to expand)
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)  ⎿  ok
+     syntax ok
+     // -------------------------------------------------------------------
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated frontend/src/app.js (+5 -4)
+       99  // never resolves and never rejects, so `busy` would stay true
+            forever and the
+      100  // Send button would never come back. These two watchdogs are 
+           what guarantee
+      101  // the turn always ends, one way or another.
+      102 -// The server emits `progress` while it buffers the answer doc
+          -ument, so silence                                             
+      103 -// now genuinely means silence - before that, the whole drawin
+          -g phase looked                                                
+      104 -// like a stall and long turns were being killed by this timer
+          - while they were                                              
+      102 +//                                                            
+      103 +// They can afford to be patient now. The server emits `progre
+          +ss` while it                                                  
+      104 +// buffers the answer document, so silence means silence; prev
+          +iously the entire                                             
+      105 +// drawing phase was silent and this timer was cutting off tur
+          +ns that were                                                  
+      106  // working fine. The ceiling sits above REQUEST_TIMEOUT_S in w
+           rangler.jsonc on
+      106 -// purpose: the server should give up first, because its failu
+          -re arrives as an                                              
+      107 +// purpose - the server should give up first, because its fail
+          +ure arrives as an                                             
+      108  // `error` event that says what went wrong, and this one can o
+           nly say "gave up".
+      109  const STALL_MS = 120_000; // no event of any kind for this lon
+           g
+      110  const LIMIT_MS = 480_000; // absolute ceiling on one turn
+
+⏺ Now the Worker config — the explicit CPU ceiling and the longer upstream
+  timeout:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     parses ok: {"limits": {"cpu_ms": 120000}, "timeout": "420"}
+  ⎿  Updated worker/wrangler.jsonc (+14 -2)
+      19      "PROMPT_VERSION": "1",
+      20      // Ceiling on one call to the Claude API. Turns routinely r
+          un 20-60s and a
+      21      // busy drawing can run longer, so this is the "something i
+          s wrong" limit,
+      22 -    // not the expected duration. The browser gives up before t
+         -his does.                                                      
+      23 -    "REQUEST_TIMEOUT_S": "240"                                 
+      22 +    // not the expected duration. Kept below the browser's LIMI
+         +T_MS in app.js,                                                
+      23 +    // so a turn that runs away is ended here, where the client
+         + is told why,                                                  
+      24 +    // rather than by the client giving up on a stream that say
+         +s nothing.                                                     
+      25 +    "REQUEST_TIMEOUT_S": "420"                                 
+      26    },
+      27  
+      28 +  // A turn is mostly spent waiting on the Claude API, but the 
+         +Python side is                                                 
+      29 +  // not free: every SSE delta is decoded, JSON-parsed and re-f
+         +ramed in Pyodide,                                              
+      30 +  // and that adds up across a long turn. Going over the defaul
+         +t ceiling does                                                 
+      31 +  // not just fail the request - it kills the isolate mid-inter
+         +preter, and every                                              
+      32 +  // request routed there afterwards dies with "Attempted to us
+         +e PyProxy when                                                 
+      33 +  // Python GIL not held" until it is recycled. One slow turn t
+         +ook out                                                        
+      34 +  // /api/health for minutes at a time. This is the backstop; t
+         +he real fix was                                                
+      35 +  // sending far less path data in the first place.            
+      36 +  "limits": { "cpu_ms": 120000 },                              
+      37 +                                                               
+      38    "observability": { "enabled": true }
+      39  }
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     54:    request_timeout_s: float = 420.0
+     78:            request_timeout_s=float(env.get("REQUEST_TIMEOUT_S", "4
+     20")),
+  ⎿  Updated backend/src/collaborate/config.py (+4 -3)
+      49      default_prompt_id: str = "doodle"
+      50      default_prompt_version: int = 1
+      51      # Wall-clock ceiling for one turn. Turns take 20-30s; this 
+          is the "something
+      52 -    # is wrong" limit, not the expected duration.              
+      53 -    request_timeout_s: float = 180.0                           
+      52 +    # is wrong" limit, not the expected duration. Matches the d
+         +eployed default                                                
+      53 +    # in wrangler.jsonc so a turn behaves the same locally and 
+         +on the Worker.                                                 
+      54 +    request_timeout_s: float = 420.0                           
+      55      # Opt-in server-side refusal fallback. A doodle prompt is v
+          ery unlikely to
+      56      # trip a safety classifier, and this adds a beta header to 
+          the request, so
+      57      # it's off until someone has a reason to turn it on. Refusa
+          l *handling*
+     ...
+      75              api_key=key,
+      76              default_prompt_id=env.get("PROMPT_ID", "doodle"),
+      77              default_prompt_version=int(env.get("PROMPT_VERSION"
+          , "1")),
+      77 -            request_timeout_s=float(env.get("REQUEST_TIMEOUT_S"
+         -, "180")),                                                     
+      78 +            request_timeout_s=float(env.get("REQUEST_TIMEOUT_S"
+         +, "420")),                                                     
+      79              refusal_fallback=env.get("REFUSAL_FALLBACK", "").lo
+          wer()
+      80              in ("1", "true", "yes"),
+      81          )
+
+⏺ Adding tests for the two new server-side behaviours:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Bash(cat >> backend/tests/test_svgdoc.py <<'EOF'…)
+  ⎿  ...............................
+        [100%]
+     =============================== warnings summary =====================
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated backend/tests/test_svgdoc.py (+27 -0)
+      123  def test_prompt_id_cannot_escape_the_prompts_directory() -> No
+           ne:
+      124      with pytest.raises(ValueError):
+      125          prompts.load("../../etc", 1)
+      126 +                                                              
+      127 +                                                              
+      128 +def test_precision_is_clamped_on_the_way_back() -> None:      
+      129 +    base = sample("t01")                                      
+      130 +    layer = """  <g id="ai-turn-1" fill="none" stroke="#8a8a8a
+          +">                                                            
+      131 +    <path d="M 10.123456789 20.5 C 30.98765 40.000001 50 60.12
+          +39"/>                                                         
+      132 +  </g>"""                                                     
+      133 +    result = svgdoc.review(base, reply(base, layer))          
+      134 +    assert result.ok                                          
+      135 +    assert 'd="M 10.123 20.5 C 30.988 40 50 60.124"' in result
+          +.svg                                                          
+      136 +                                                              
+      137 +                                                              
+      138 +def test_clamping_leaves_everything_that_is_not_geometry_alone
+          +() -> None:                                                   
+      139 +    marked_up = '<path d="M 1.00005 2" stroke="#8a8a8a" id="tu
+          +rn-1.5" opacity="0.55555"/>'                                  
+      140 +    clamped = svgdoc.clamp_precision(marked_up)               
+      141 +    assert 'd="M 1 2"' in clamped                             
+      142 +    assert 'stroke="#8a8a8a"' in clamped                      
+      143 +    assert 'id="turn-1.5"' in clamped                         
+      144 +    assert 'opacity="0.55555"' in clamped                     
+      145 +                                                              
+      146 +                                                              
+      147 +def test_clamping_does_not_trip_the_preservation_check() -> No
+          +ne:                                                           
+      148 +    """The input is already at this precision, so rounding is 
+          +a no-op on it."""                                             
+      149 +    base = sample("t01")                                      
+      150 +    result = svgdoc.review(base, reply(base, GOOD_LAYER))     
+      151 +    assert result.ok                                          
+      152 +    assert not any("modified or reordered" in w for w in resul
+          +t.warnings)                                                   
+  ⎿  Updated backend/tests/test_turn.py (+14 -0)
+      159      with TestClient(local_server.app) as client:
+      160          response = client.post("/api/turn", json={"svg": BASE}
+           )
+      161          assert "ANTHROPIC_API_KEY is not set" in response.text
+      162 +                                                              
+      163 +                                                              
+      164 +@pytest.mark.anyio                                            
+      165 +async def test_buffered_drawing_phase_reports_progress(monkeyp
+          +atch) -> None:                                                
+      166 +    """The answer SVG is buffered, so without this the client 
+          +sees dead air."""                                             
+      167 +    chunk = "x" * claude.PROGRESS_EVERY_CHARS                 
+      168 +    events = await collect(                                   
+      169 +        monkeypatch,                                          
+      170 +        claude.TextProgress(len(chunk)),                      
+      171 +        claude.TextProgress(len(chunk) * 2),                  
+      172 +        claude.Completed(REPLY),                              
+      173 +    )                                                         
+      174 +    progress = [e for e in events if e["type"] == "progress"] 
+      175 +    assert [e["chars"] for e in progress] == [len(chunk), len(
+          +chunk) * 2]                                                   
+
+⏺ All 31 pass. Now vendoring the shared package into the Worker — the backend
+  changes don't reach it otherwise:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Let me verify wait_until accepts what I'm handing it — that matters, since
+  it's the fix for the isolate poisoning:
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+⏺ The SDK's own pattern reveals a third bug in the original:
+  asyncio.ensure_future without a strong reference — asyncio only weakly
+  references tasks, so the pump could be garbage collected mid-stream. That
+  alone matches "thinking arrives, drawing never does." Fixing all three
+  together:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     worker sources compile
+     … +77 lines (ctrl+o to expand)
+  ⎿  Updated worker/src/entry.py (+28 -7)
+       9  `transport_fetch.py` are the only Worker-specific code.
+      10  """
+      11  
+      12 +import asyncio                                                 
+      13  import json
+      14  import re
+      15  import time
+     ...
+      134  IMMEDIATE = frozenset({"status", "svg", "done", "error", "warn
+           ing", "progress"})
+      135  
+      136  
+      137 +# Strong references to in-flight pump tasks; see `_sse`.      
+      138 +_PUMPS: set = set()                                           
+      139 +                                                              
+      140 +                                                              
+      141  def _sse(events) -> Response:
+      142      """Wrap an async iterator of protocol events in a streamin
+           g Response.
+      143  
+     ...
+      145      `StreamingResponse`; here it is a `TransformStream` whose 
+           writer is pumped
+      146      by a task registered with `waitUntil`.
+      147  
+      143 -    That registration matters. A bare `asyncio.ensure_future` 
+          -leaves a Python                                               
+      144 -    task running that the Workers runtime knows nothing about:
+          - it keeps a frame                                             
+      145 -    alive past the response, and the next request routed to th
+          -e same isolate                                                
+      146 -    fails with "Cannot enter a promising task from inside anot
+          -her running                                                   
+      147 -    promising task". `waitUntil` makes the task part of the re
+          -quest's lifetime,                                             
+      148 -    which is what it always was in fact.                      
+      148 +    Three things about that task are load-bearing, and it prev
+          +iously had none                                               
+      149 +    of them:                                                  
+      150 +                                                              
+      151 +    * it is held in `_PUMPS` until it finishes. `ensure_future
+          +` returns the                                                 
+      152 +      only strong reference to a task, and asyncio itself keep
+          +s just a weak                                                 
+      153 +      one - drop it and the pump can be collected mid-stream, 
+          +which ends the                                                
+      154 +      response body early and silently. The client sees Claude
+          +'s reasoning                                                  
+      155 +      arrive and then no drawing.                             
+      156 +    * it is handed to `waitUntil`, so the runtime counts it as
+          + part of this                                                 
+      157 +      request. Left detached, it outlives the response, and th
+          +e next request                                                
+      158 +      routed to the same isolate fails with "Cannot enter a pr
+          +omising task                                                  
+      159 +      from inside another running promising task".            
+      160 +    * its exceptions are logged rather than discarded.        
+      161      """
+     … 19 more lines (ctrl+o to expand)
+
+⏺ wait_until is resolved through a module __getattr__ that reaches into JS —
+  doing that at import time is risky, so let me defer it and then actually boot
+  the Worker to confirm:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     19:import workers
+     213:    workers.wait_until(task)
+  ⎿  Updated worker/src/entry.py (+7 -2)
+      16  
+      17  from js import URL, AbortSignal, Object, Request, TextEncoder, 
+          TransformStream, console, fetch
+      18  from pyodide.ffi import to_js
+      19 -from workers import Response, WorkerEntrypoint, wait_until     
+      19 +import workers                                                 
+      20 +from workers import Response, WorkerEntrypoint                 
+      21  
+      22  from collaborate import claude, prompts, turn
+      23  from collaborate.bundle import SAMPLES
+     ...
+      206              log("stream.pump_failed", message=str(finished.exc
+           eption()))
+      207  
+      208      task.add_done_callback(_finished)
+      208 -    wait_until(task)                                          
+      209 +    # Resolved here rather than imported at module scope: `wor
+          +kers`                                                         
+      210 +    # exposes it through a module `__getattr__` that reaches i
+          +nto the                                                       
+      211 +    # `cloudflare:workers` JS module, which is not something t
+          +o do while                                                    
+      212 +    # this module is still being evaluated.                   
+      213 +    workers.wait_until(task)                                  
+      214  
+      215      return Response(
+      216          stream.readable,
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Worker boots. Now exercising the SSE path itself — the pump, wait_until, and
+  the batching — via an error turn that doesn't call the API:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Now one real end-to-end turn to confirm the whole chain, including the new
+  progress events:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Clean turn in 9.6s. Let me shut down and run the full checks:
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ All 31 tests pass, the Worker boots, and a real turn completes end to end.
+  Here's what was going on.
+
+  The GIL error is not your bug — it's the wreckage
+
+  The timeline is conclusive. Every burst of Attempted to use PyProxy when 
+  Python GIL not held / Cannot enter a promising task... immediately follows an
+  exceededCpu kill on /api/turn, and the requests that throw it are /api/health,
+  /api/prompts, /api/samples — endpoints that burn 0ms CPU and can't possibly
+  be at fault. Cloudflare kills the isolate mid-interpreter, Pyodide is left
+  wedged, and every subsequent request routed there dies until it recycles. One
+  slow turn took out your health check for 17 minutes straight (02:02:16 →
+  02:19:50).
+
+  So I fixed the CPU exhaustion, and found two genuine bugs in the streaming
+  path along the way.
+
+  Root causes, in order of leverage
+
+  1. Path data volume. Tremor-heavy strokes produce enormous d attributes, which
+  get re-emitted by the model, sent back, and sent again next turn. On a
+  synthetic 3-second wiggly stroke the new pipeline cuts the path from 8247 → 
+  1094 bytes, 86.7%. Three stages in editor.js:20-102: sample spacing 2.5→3.5,
+  an EMA tremor filter (SMOOTHING = 0.45), and Ramer–Douglas–Peucker
+  simplification. Preview deliberately skips RDP — it re-picks kept points as
+  the stroke grows, which reads as the line twitching under the pen.
+
+  2. The pump task was doubly broken (worker/src/entry.py:154-213).
+  asyncio.ensure_future(pump()) kept no strong reference — asyncio only weakly
+  references tasks, so the pump could be garbage collected mid-stream. That is
+  very likely your "thinking text arrives, drawing never shows up": the body
+  just stops. It was also detached from the request, which is what produces the
+  "promising task" error on the next request to that isolate. Now it's held in
+  _PUMPS, handed to waitUntil, and its exceptions are logged.
+
+  3. Frames cost more than the work. One Python→JS crossing per thinking token.
+  Now batched to 512 bytes, with status/svg/done/error/progress still going out
+  immediately.
+
+  Your three follow-ups
+
+  - Timeouts: the real bug wasn't the number. The answer SVG is buffered (half a
+    <path> is a glitch, not a drawing), so the entire drawing phase emitted
+    nothing — your 90s stall watchdog was killing turns that were working fine.
+    There's now a progress event every 2000 chars, so silence means silence.
+    Stall 90s→120s, ceiling 300s→480s, REQUEST_TIMEOUT_S 240→420, ordered so the
+    server gives up first and the client gets a real error instead of "gave
+    up".
+  - Green button, no drawing: takeTurn returned normally when the stream just
+    stopped. app.js now tracks whether the turn ever reached svg or error and
+    reports a truncated stream as a failure.
+  - 3-decimal clamp: on send in serializeNode (covers samples and Claude's
+    returned layers, not just fresh strokes), and on the return trip via
+    svgdoc.clamp_precision — no prompt change. The verified turn came back with
+    max 1 decimal place. It's applied before the preservation check so the
+    input, already at that precision, compares like-for-like.
+
+  I also set "limits": { "cpu_ms": 120000 } in wrangler.jsonc as a backstop,
+  fixed a quadratic buffer scan in the SSE reader, and hoisted a per-chunk FFI
+  allocation.
+
+  Two things worth flagging: I bumped cpu_ms to 120s as a safety net, but the
+  logs report kills at ~2010ms CPU, which doesn't match the documented 30s
+  default — worth watching after deploy to see whether the reported number is
+  real or truncated by the log pipeline. And make vendor dist is already run,
+  but nothing is committed or deployed — that's your call.
+
+✻ Cooked for 10m 9s · done 10:34 PM
+
+※ recap: Goal was fixing your collaborative doodling app's smoothing, GIL crashes, and timeouts. All changes are made, tested, and verified against a real turn. Next action is yours: review the diff, then commit and deploy. (disable recaps in /config)
+
+❯ seeing this again, after a manual deploy ANTHROPIC_API_KEY is not set. local: 
+  put it in backend/.env (copy backend/.env.example), or export it before make  
+  dev deployed: wrangler secret put ANTHROPIC_API_KEY Create a key at           
+  https://console.anthropic.com/settings/keys                                   
+
+⏺ Let me look at what the repo already does about this — there are two recent
+  commits on exactly this.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Let me check the live state rather than guess — this repo has two
+  known-different deploy paths.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Secret is genuinely gone ([]), not the propagation delay. Checking whether
+  this was the known CI path:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Found it. You committed my changes as "Synch errors" and pushed (0 ahead / 0
+  behind origin). That push triggered a Cloudflare Workers Build — which is
+  precisely the secret-dropping path your own commit 9cbb6f4 documented. Not a
+  new bug; the known one, fired by the push rather than by your manual deploy.
+
+  Restoring it:
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Site is back: {"ok": true, "auth": "ok"}. Let me confirm the pushed code is
+  live and the streaming fixes actually hold in production:
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Production turn is clean — status → thinking ×26 → svg → done, and health
+  still fine afterward, so no isolate poisoning. Let me confirm the CI
+  hypothesis rather than assume it:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Deployment history pins it down:
+
+  ┌──────────────────┬──────────────────────────────────────────────────────┐
+  │    Time (UTC)    │                        Source                        │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ 23:47            │ Secret Change (your last make secret)                │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ 23:47 – 23:48    │ deployments — key survived, app worked through 02:24 │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ 02:35, 02:35,    │ three deployments — around your "Synch errors"       │
+  │ 02:38            │ commit at 02:35:20                                   │
+  ├──────────────────┼──────────────────────────────────────────────────────┤
+  │ 02:42            │ Secret Change (my restore just now)                  │
+  └──────────────────┴──────────────────────────────────────────────────────┘
+
+  The key survived from 23:47 all the way through your 02:24 test session, then
+  the cluster of deploys at 02:35–02:38 wiped it. So it's a deploy that dropped
+  it, consistent with your earlier diagnosis — the secret lives outside
+  wrangler.jsonc, so any deploy that rebuilds bindings from that file deletes
+  it.
+
+  You're unblocked, but this is the third time. The durable fix is a decision I
+  shouldn't make for you, since it touches your Cloudflare account and CI
+  policy:
+
+⏺ User answered Claude's questions:
+  ⎿  · How do you want to stop the deploy from dropping ANTHROPIC_API_KEY for 
+     good? → Only deploy via `make deploy` (Recommended)
+
+⏺ Implementing that. Let me see how the README documents the deploy flow so the
+  change stays consistent:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     2:PYTHON ?= $(shell command -v python3.13 || command -v python3.14 ||
+     command -v python3)
+     … +4 lines (ctrl+o to expand)
+  ⎿  Updated Makefile (+35 -8)
+       7  ENV_FILE  := backend/.env
+       8  ENV_FLAG  := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE
+          ),)
+       9  
+      10 -.PHONY: setup dev test clean bundle vendor dist worker-dev depl
+         -oy secret                                                      
+      10 +.PHONY: setup dev test clean bundle vendor dist worker-dev depl
+         +oy secret verify                                               
+      11  
+      12  ## Create the venv and install the backend in editable mode.
+      13  setup:
+     ...
+      62  worker-dev: vendor dist
+      63          cd worker && uv run pywrangler dev --port 8788
+      64  
+      65 -## Deploy to Cloudflare, then make sure the key is still bound.
+      65 +## Deploy to Cloudflare, restore the key if the deploy dropped 
+         +it, then prove                                                 
+      66 +## the deployed Worker actually works.                         
+      67  ##
+      67 -## A local deploy keeps the secret; a Cloudflare Workers Build 
+         -does not - it                                                  
+      68 -## rebuilds the Worker's bindings and ANTHROPIC_API_KEY, which 
+         -lives outside                                                  
+      69 -## wrangler.jsonc, disappears. The Worker stays up and every ro
+         -ute works except                                               
+      70 -## the one that needs a key, so it looks like an app bug rather
+         - than a deploy                                                 
+      71 -## problem. This check makes the local path self-healing; a CI 
+         -deploy still                                                   
+      72 -## needs `make secret` afterwards.                             
+      68 +## ANTHROPIC_API_KEY lives outside wrangler.jsonc, so a deploy 
+         +that rebuilds the                                              
+      69 +## Worker's bindings from that file alone deletes it. The Worke
+         +r stays up and                                                 
+      70 +## every route works except the one that needs a key, which rea
+         +ds as an app bug                                               
+      71 +## rather than a deploy problem - that is why it kept looking i
+         +ntermittent.                                                   
+      72 +##                                                             
+      73 +## This is the only supported way to deploy. Deploy-on-push is 
+         +turned off in the                                              
+      74 +## Cloudflare dashboard precisely because a Workers Build has n
+         +o `make secret`                                                
+      75 +## to heal itself: it would drop the key on every push and leav
+         +e the site broken                                              
+      76 +## until someone noticed. If you re-enable it, this target stop
+         +s protecting you.                                              
+      77  deploy: vendor dist
+      78          cd worker && uv run pywrangler deploy
+      79          @if cd worker && npx --yes wrangler secret list 2>/dev/
+          null \
+     ...
+       83                  echo "→ ANTHROPIC_API_KEY missing after deploy
+           ; restoring"; \
+       84                  $(MAKE) --no-print-directory secret; \
+       85          fi
+       86 +        @$(MAKE) --no-print-directory verify                  
+       87 +                                                              
+       88 +## Ask the deployed Worker whether it is actually healthy.    
+       89 +##                                                            
+     … 22 more lines (ctrl+o to expand)
+
+⏺ I referenced WORKER_URL without defining it — fixing that and simplifying the
+  URL discovery:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     → checking https://collaborate.eric-j-witherspoon.workers.dev/api/heal
+     th
+     → healthy: {"ok": true, "auth": "ok"}
+  ⎿  Updated Makefile (+5 -5)
+       5  PORT   ?= 8787
+       6  
+       7  ENV_FILE  := backend/.env
+       8 +## The deployed origin `make verify` probes. Override for anoth
+         +er account:                                                    
+       9 +##     make verify WORKER_URL=https://collaborate.you.workers.d
+         +ev                                                             
+      10 +WORKER_URL ?= https://collaborate.eric-j-witherspoon.workers.de
+         +v                                                              
+      11  ENV_FLAG  := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE
+          ),)
+      12  
+      13  .PHONY: setup dev test clean bundle vendor dist worker-dev depl
+          oy secret verify
+     ...
+       95  ## to propagate and reports the old state until it does. Run i
+           t after any deploy
+       96  ## you did not make yourself.
+       97  verify:
+       95 -        @url=$$(cd worker && npx --yes wrangler deployments st
+          -atus 2>/dev/null \                                            
+       96 -                | grep -om1 'https://[^ ]*workers.dev') ; \   
+       97 -        url=$${url:-$(WORKER_URL)} ; \                        
+       98 -        echo "→ checking $$url/api/health" ; \                
+       98 +        @echo "→ checking $(WORKER_URL)/api/health" ; \       
+       99          for i in 1 2 3 4 5 6; do \
+      100 -                body=$$(curl -fsS -m 15 "$$url/api/health" 2>/
+          -dev/null) ; \                                                 
+      100 +                body=$$(curl -fsS -m 15 "$(WORKER_URL)/api/hea
+          +lth" 2>/dev/null) ; \                                         
+      101                  case "$$body" in \
+      102                          *'"ok": true'*) echo "→ healthy: $$bod
+           y" ; exit 0 ;; \
+      103                  esac ; \
+
+❯ Also, please add a "Clear All" button next to undo, way more responsive now   
+  with the smaller svgs, good to be able to start over.                         
+
+⏺ make verify works. Now the Clear All button — let me look at the existing
+  controls:
+
+  Searched for 2 patterns, ran 1 shell command (ctrl+o to expand)
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  index.html ok
+     app.js ok
+     syntax ok
+     … +8 lines (ctrl+o to expand)
+  ⎿  Updated frontend/index.html (+1 -0)
+      22      <div class="controls">
+      23        <button id="send" class="primary">Send to Claude</button>
+      24        <button id="undo">Undo</button>
+      25 +      <button id="clear">Clear all</button>                    
+      26        <span class="spacer"></span>
+      27        <label class="sample">
+      28          Load
+  ⎿  Updated frontend/src/app.js (+17 -0)
+      11    canvas: el('canvas'),
+      12    send: el('send'),
+      13    undo: el('undo'),
+      14 +  clear: el('clear'),                                          
+      15    sample: el('sample'),
+      16    status: el('status'),
+      17    thinking: el('thinking'),
+     ...
+      79    ui.undo.textContent =
+      80      last === 'ai' ? "Undo Claude's turn" : last === 'user' ? 'U
+          ndo stroke' : 'Undo';
+      81  
+      82 +  ui.clear.disabled = busy || editor.isEmpty();                
+      83 +                                                               
+      84    const pending = editor.newUserStrokes();
+      85    ui.send.disabled = busy || pending === 0;
+      86  
+     ...
+      237    }
+      238  });
+      239  
+      240 +// Start over. Undo pops one thing at a time, which is the wro
+          +ng tool for                                                   
+      241 +// abandoning a drawing that went nowhere - and the confirm is
+          + here because this                                            
+      242 +// throws away the transcripts too, which undo never does.    
+      243 +ui.clear.addEventListener('click', () => {                    
+      244 +  if (busy || editor.isEmpty()) return;                       
+      245 +  if (!confirm('Clear the drawing and start over?')) return;  
+      246 +  editor.clear();                                             
+      247 +  transcripts = [];                                           
+      248 +  renderTranscripts();                                        
+      249 +  ui.log.textContent = '';                                    
+      250 +  setStatus('idle');                                          
+      251 +  sync();                                                     
+      252 +});                                                           
+      253 +                                                              
+      254  ui.sample.addEventListener('change', async () => {
+      255    const name = ui.sample.value;
+      256    if (!name) return;
+
+⏺ Now documenting the deploy policy in the README so the decision doesn't get
+  lost:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     ```sh
+     make worker-dev                 # Pyodide locally, like production, on
+     … +26 lines (ctrl+o to expand)
+  ⎿  Updated README.md (+19 -4)
+      313  ```sh
+      314  make worker-dev                 # Pyodide locally, like produc
+           tion, on :8788
+      315  wrangler login                  # once
+      316 -make deploy                     # bundle + wheel + assets + py
+          -wrangler deploy                                               
+      317 -cd worker && wrangler secret put ANTHROPIC_API_KEY            
+      316 +make deploy                     # build, deploy, restore the k
+          +ey, verify health                                             
+      317 +make secret                     # re-upload the key from backe
+          +nd/.env                                                       
+      318 +make verify                     # ask the deployed Worker if i
+          +t is healthy                                                  
+      319  ```
+      320  
+      321 +**`make deploy` is the only supported way to deploy.** `ANTHRO
+          +PIC_API_KEY` is a                                             
+      322 +secret set out of band, so it is not in `wrangler.jsonc`, and 
+          +a deploy that                                                 
+      323 +rebuilds the Worker's bindings from that file alone deletes it
+          +. The result is a                                             
+      324 +live Worker where every route works except the one that needs 
+          +a key — which                                                 
+      325 +reads as an app bug rather than a deploy problem, and is why t
+          +his kept looking                                              
+      326 +intermittent. `make deploy` therefore re-checks the binding af
+          +terwards, restores                                            
+      327 +it from `backend/.env` if it went missing, and then calls `mak
+          +e verify` to                                                  
+      328 +confirm the deployed `/api/health` actually authenticates.    
+      329 +                                                              
+      330 +Deploy-on-push is **off** in the Cloudflare dashboard for the 
+          +same reason: a                                                
+      331 +Workers Build has no `make secret` to heal itself, so it would
+          + drop the key on                                              
+      332 +every push. If you re-enable it, run `make verify` after each 
+          +build — and expect                                            
+      333 +to run `make secret` when it fails.                           
+      334 +                                                              
+      335  Two build steps run before every deploy, both generated and gi
+           tignored:
+      336  
+      337  - `make bundle` bakes `prompts/` and the sample list into
+     ...
+      367  confirmed non-zero on the second turn), and a turn costs rough
+           ly $0.04-0.05 at
+      368  `effort: high`.
+      369  
+      355 -Not yet deployed to a Cloudflare account — `make deploy` is wi
+          -red and untested                                              
+      356 -against the real platform, pending `wrangler login`.          
+      370 +Deployed and running at                                       
+      371 +`https://collaborate.eric-j-witherspoon.workers.dev`.         
+
+⏺ Now let me verify the Clear all button actually works in the running app
+  rather than just assuming:
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Markup and handler are live. Let me actually drive it in a browser — the
+  smoothing is the headline change and I've only verified it numerically so far:
+
+⏺ Skill(claude-in-chrome)
+  ⎿  Successfully loaded skill
+
+  Called claude-in-chrome 2 times (ctrl+o to expand)
+
+⏺ Page loads, "Clear all" sits next to Undo and is correctly disabled on an
+  empty canvas. Let me draw a tremor-heavy stroke with synthetic pointer events
+  so I can measure the real smoothing output:
+
+  Called claude-in-chrome (ctrl+o to expand)
+
+⏺ Two numbers look wrong — 2 curve segments is far too aggressive, and the
+  button states contradict the hint. Let me inspect rather than guess:
+
+  Called claude-in-chrome (ctrl+o to expand)
+
+⏺ Four paths from one stroke, and each stroke split in two — that's my
+  synthetic-event harness misbehaving, not the app. Let me test the smoothing
+  module directly with known input, which removes the harness from the picture:
+
+  Called claude-in-chrome (ctrl+o to expand)
+
+⏺ The real module in the browser confirms the pipeline is correct — 147 sampled
+  points spanning the full y range 145–367, simplified to 21, 996 bytes 
+  committed vs 7159 preview (86% smaller). The earlier odd result was my
+  synthetic-event harness, not the app.
+
+  Now the actual button, with confirm stubbed so the dialog can't block the
+  extension:
+
+  Called claude-in-chrome (ctrl+o to expand)
+
+⏺ State keeps shifting between calls — wrangler dev live-reload is restoring
+  saved sessions. Let me reset cleanly and use a real mouse drag instead:
+
+  Called claude-in-chrome 3 times (ctrl+o to expand)
+
+⏺ Real drag drew a stroke; all three buttons now enabled. Re-stubbing confirm
+  (the reload cleared it) and clicking Clear all:
+
+  Called claude-in-chrome 3 times (ctrl+o to expand)
+
+⏺ Clear all works end to end: confirm shown, canvas emptied, all three buttons
+  re-disabled, status back to idle, log cleared, and the saved session replaced
+  with an empty document. Checking for console errors, then cleaning up:
+  Called claude-in-chrome (ctrl+o to expand)
+
+⏺ That error is the Chrome extension's own messaging channel, not the app.
+  Cleaning up:
+
+  Called claude-in-chrome, ran 1 shell command (ctrl+o to expand)
+
+⏺ One correction before I wrap up — the README asserts deploy-on-push is already
+  off, which isn't true until you flip it in the dashboard:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+     Build) for the same reason: a Workers Build has no `make secret` to he
+     al itself,
+     … +8 lines (ctrl+o to expand)
+  ⎿  Updated README.md (+5 -4)
+      327  it from `backend/.env` if it went missing, and then calls `mak
+           e verify` to
+      328  confirm the deployed `/api/health` actually authenticates.
+      329  
+      330 -Deploy-on-push is **off** in the Cloudflare dashboard for the 
+          -same reason: a                                                
+      331 -Workers Build has no `make secret` to heal itself, so it would
+          - drop the key on                                              
+      332 -every push. If you re-enable it, run `make verify` after each 
+          -build — and expect                                            
+      333 -to run `make secret` when it fails.                           
+      330 +**Turn deploy-on-push off** in the Cloudflare dashboard (Worke
+          +r → Settings →                                                
+      331 +Build) for the same reason: a Workers Build has no `make secre
+          +t` to heal itself,                                            
+      332 +so it drops the key on every push and leaves the site reportin
+          +g "key is not set"                                            
+      333 +until someone notices. If you keep it on, run `make verify` af
+          +ter every build —                                             
+      334 +and expect to run `make secret` when it fails.                
+      335  
+      336  Two build steps run before every deploy, both generated and gi
+           tignored:
+      337  
+
+⏺ Site is back up — {"ok": true, "auth": "ok"}, and a full production turn runs
+  clean (status → thinking ×26 → svg → done, health still fine afterward).
+
+  What happened to the key
+
+  Deployment history shows the secret survived from 23:47 through your whole
+  02:24 test session, then a cluster of three deploys at 02:35–02:38 — right
+  around your "Synch errors" commit at 02:35:20 — wiped it. Same root cause
+  you'd already diagnosed: the secret lives outside wrangler.jsonc, so a deploy
+  that rebuilds bindings from that file deletes it. make secret restored it;
+  propagation took ~10s.
+
+  Durable fix (your choice: deploy only via make deploy)
+
+  - make verify — new target. Polls the deployed /api/health with retries and
+    fails loudly with the exact recovery command. secret list only proves a
+    binding exists; this proves the key behind it authenticates. Tested: → 
+    healthy: {"ok": true, "auth": "ok"}.
+  - make deploy now ends with make verify, so a deploy can't silently succeed
+    into a broken site.
+  - README documents the policy.
+
+  One step I can't do for you: turning off deploy-on-push in the Cloudflare
+  dashboard (Worker → Settings → Build). Until you flip it, the next push will
+  drop the key again. I wrote the README as an instruction rather than claiming
+  it's already off.
+
+  Clear all button
+
+  Added next to Undo, and verified in a real browser rather than assumed. Drew a
+  stroke, clicked it: confirm shown ("Clear the drawing and start over?"),
+  canvas emptied, all three buttons correctly re-disabled, status back to idle,
+  log cleared, saved session replaced with an empty document. No app console
+  errors. It confirms first because unlike Undo it also discards the
+  transcripts.
+
+  While I was in there I also verified the smoothing against the real module in
+  the browser: 147 sampled points across the full stroke, simplified to 21 — 996
+  bytes committed vs 7159 preview, 86% smaller, matching the Node benchmark.
+
+  One thing worth knowing: my first attempt to test by synthesizing pointer
+  events produced garbage (strokes splitting into multiple paths, y-variation
+  collapsing). That was the test harness, not your app — real mouse drags behave
+  correctly. Worth remembering if you ever script UI tests against the canvas.
+
+  make test is green at 31 passed. Modified but uncommitted: Makefile,
+  README.md, frontend/index.html, frontend/src/app.js. I haven't committed or
+  deployed — and given the above, deploy with make deploy rather than pushing.
+
+✻ Cogitated for 7m 57s · done 10:54 PM
+
+❯ This looks great in testing please commit and make deploy                     
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The Makefile comment still asserts deploy-on-push is off — same problem I
+  fixed in the README. Correcting it before committing:
+
+⏺ Bash(python3 - <<'PYEOF'
+      import pathlib…)
+  ⎿  ok
+      Makefile            | 44 ++++++++++++++++++++++++++++++++++++--------
+      README.md           | 24 ++++++++++++++++++++----
+     … +3 lines (ctrl+o to expand)
+  ⎿  Updated Makefile (+5 -4)
+      73  ## every route works except the one that needs a key, which rea
+          ds as an app bug
+      74  ## rather than a deploy problem - that is why it kept looking i
+          ntermittent.
+      75  ##
+      76 -## This is the only supported way to deploy. Deploy-on-push is 
+         -turned off in the                                              
+      77 -## Cloudflare dashboard precisely because a Workers Build has n
+         -o `make secret`                                                
+      78 -## to heal itself: it would drop the key on every push and leav
+         -e the site broken                                              
+      79 -## until someone noticed. If you re-enable it, this target stop
+         -s protecting you.                                              
+      76 +## This is the only supported way to deploy. Turn deploy-on-pus
+         +h OFF in the                                                   
+      77 +## Cloudflare dashboard (Worker -> Settings -> Build): a Worker
+         +s Build has no                                                 
+      78 +## `make secret` to heal itself, so it drops the key on every p
+         +ush and leaves                                                 
+      79 +## the site broken until someone notices. While it is on, this 
+         +target only                                                    
+      80 +## protects the deploys you run yourself.                      
+      81  deploy: vendor dist
+      82          cd worker && uv run pywrangler deploy
+      83          @if cd worker && npx --yes wrangler secret list 2>/dev/
+          null \
+
+  Committed 3a0cd99 (ctrl+o to expand)
+  ⎿  PostToolUse:Bash says: Tip: Run /ultrareview before you push to catch bugs 
+     with a cloud-based multi-agent review — 3 free reviews left.
+
+⏺ Committed. Now deploying:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Deploy succeeded and the key survived this time. Final confirmation that the
+  deployed site actually works:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Committed as 3a0cd99 and deployed.
+
+  Uploaded collaborate (8.90 sec)
+  Current Version ID: 21e9832b-5f1a-4fab-965e-c88ace7d6241
+  → ANTHROPIC_API_KEY still bound
+  → healthy: {"ok": true, "auth": "ok"}
+
+  The key survived this deploy, and make verify now runs as the last step, so a
+  deploy can't silently succeed into a broken site again.
+
+  Confirmed live on production:
+  - Clear all is in the deployed markup next to Undo
+  - A full turn runs clean: status → thinking ×22 → svg → done
+  - Health still good afterward — no isolate poisoning
+
+  Two things to be aware of
+
+  Don't git push yet. Your local main is now one commit ahead of origin. If
+  deploy-on-push is still enabled, pushing triggers a Workers Build that will
+  drop the key again — exactly what happened last time. Turn it off first at
+  Worker → Settings → Build in the Cloudflare dashboard, then push freely.
+  That's the one step I can't do for you, and it's why both the Makefile and
+  README now phrase it as an instruction rather than claiming it's already off.
+
+  If it does happen again: make secret && make verify is the recovery, and make 
+  verify alone tells you whether you need it.
+
+✻ Cooked for 1m 16s · done 10:56 PM

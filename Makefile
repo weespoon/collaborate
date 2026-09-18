@@ -80,7 +80,11 @@ worker-dev: vendor dist
 ## protects the deploys you run yourself.
 deploy: vendor dist
 	cd worker && uv run pywrangler deploy
-	@if cd worker && npx --yes wrangler secret list 2>/dev/null \
+## The `cd` stays inside the subshell on purpose: run bare, it also moves the
+## branches below, and `make secret` then runs from worker/, which has no
+## Makefile - the restore died with "No rule to make target `secret'" and took
+## the deploy down with it, every time the key actually needed restoring.
+	@if (cd worker && npx --yes wrangler secret list 2>/dev/null) \
 		| grep -q ANTHROPIC_API_KEY; then \
 		echo "→ ANTHROPIC_API_KEY still bound"; \
 	else \

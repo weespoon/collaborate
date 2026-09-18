@@ -333,13 +333,15 @@ so it drops the key on every push and leaves the site reporting "key is not set"
 until someone notices. If you keep it on, run `make verify` after every build —
 and expect to run `make secret` when it fails.
 
-Two build steps run before every deploy, both generated and gitignored:
+Three build steps run before every deploy, all generated and gitignored:
 
 - `make bundle` bakes `prompts/` and the sample list into
   `backend/src/collaborate/bundle.py`, because Pyodide has no filesystem to walk
   and no PyYAML. The markdown files stay canonical.
-- `make wheel` builds `collaborate` as a wheel. pywrangler installs into the
-  Pyodide environment with `--no-build`, so a source tree is rejected.
+- `make vendor` copies `collaborate` into `worker/src/`. Cloudflare bundles every
+  `.py` file under the entrypoint, so the Worker imports the same modules the dev
+  server does — no wheel, and no lock file pinning a hash that moves on every
+  backend edit.
 - `make dist` assembles `worker/public/` (frontend + sample SVGs) for the
   static-assets binding. `run_worker_first: ["/api/*"]` keeps the API ahead of
   asset routing; everything else falls through to the assets.

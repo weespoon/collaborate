@@ -11,6 +11,7 @@ const ui = {
   canvas: el('canvas'),
   send: el('send'),
   undo: el('undo'),
+  clear: el('clear'),
   sample: el('sample'),
   status: el('status'),
   thinking: el('thinking'),
@@ -77,6 +78,8 @@ function sync() {
   ui.undo.disabled = busy || last === null;
   ui.undo.textContent =
     last === 'ai' ? "Undo Claude's turn" : last === 'user' ? 'Undo stroke' : 'Undo';
+
+  ui.clear.disabled = busy || editor.isEmpty();
 
   const pending = editor.newUserStrokes();
   ui.send.disabled = busy || pending === 0;
@@ -232,6 +235,20 @@ ui.undo.addEventListener('click', () => {
     transcripts.pop();
     renderTranscripts();
   }
+});
+
+// Start over. Undo pops one thing at a time, which is the wrong tool for
+// abandoning a drawing that went nowhere - and the confirm is here because this
+// throws away the transcripts too, which undo never does.
+ui.clear.addEventListener('click', () => {
+  if (busy || editor.isEmpty()) return;
+  if (!confirm('Clear the drawing and start over?')) return;
+  editor.clear();
+  transcripts = [];
+  renderTranscripts();
+  ui.log.textContent = '';
+  setStatus('idle');
+  sync();
 });
 
 ui.sample.addEventListener('change', async () => {

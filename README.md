@@ -313,9 +313,25 @@ extra and never reach the Worker.
 ```sh
 make worker-dev                 # Pyodide locally, like production, on :8788
 wrangler login                  # once
-make deploy                     # bundle + wheel + assets + pywrangler deploy
-cd worker && wrangler secret put ANTHROPIC_API_KEY
+make deploy                     # build, deploy, restore the key, verify health
+make secret                     # re-upload the key from backend/.env
+make verify                     # ask the deployed Worker if it is healthy
 ```
+
+**`make deploy` is the only supported way to deploy.** `ANTHROPIC_API_KEY` is a
+secret set out of band, so it is not in `wrangler.jsonc`, and a deploy that
+rebuilds the Worker's bindings from that file alone deletes it. The result is a
+live Worker where every route works except the one that needs a key — which
+reads as an app bug rather than a deploy problem, and is why this kept looking
+intermittent. `make deploy` therefore re-checks the binding afterwards, restores
+it from `backend/.env` if it went missing, and then calls `make verify` to
+confirm the deployed `/api/health` actually authenticates.
+
+**Turn deploy-on-push off** in the Cloudflare dashboard (Worker → Settings →
+Build) for the same reason: a Workers Build has no `make secret` to heal itself,
+so it drops the key on every push and leaves the site reporting "key is not set"
+until someone notices. If you keep it on, run `make verify` after every build —
+and expect to run `make secret` when it fails.
 
 Two build steps run before every deploy, both generated and gitignored:
 
@@ -352,5 +368,5 @@ thinking arrives ~5s in, the system prompt caches (`cache_read_input_tokens`
 confirmed non-zero on the second turn), and a turn costs roughly $0.04-0.05 at
 `effort: high`.
 
-Not yet deployed to a Cloudflare account — `make deploy` is wired and untested
-against the real platform, pending `wrangler login`.
+Deployed and running at
+`https://collaborate.eric-j-witherspoon.workers.dev`.

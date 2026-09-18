@@ -5,9 +5,12 @@ BIN    := $(VENV)/bin
 PORT   ?= 8787
 
 ENV_FILE  := backend/.env
+## The deployed origin `make verify` probes. Override for another account:
+##     make verify WORKER_URL=https://collaborate.you.workers.dev
+WORKER_URL ?= https://collaborate.eric-j-witherspoon.workers.dev
 ENV_FLAG  := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE),)
 
-.PHONY: setup dev test clean bundle vendor dist worker-dev deploy secret
+.PHONY: setup dev test clean bundle vendor dist worker-dev deploy secret verify
 
 ## Create the venv and install the backend in editable mode.
 setup:
@@ -62,14 +65,19 @@ dist:
 worker-dev: vendor dist
 	cd worker && uv run pywrangler dev --port 8788
 
-## Deploy to Cloudflare, then make sure the key is still bound.
+## Deploy to Cloudflare, restore the key if the deploy dropped it, then prove
+## the deployed Worker actually works.
 ##
-## A local deploy keeps the secret; a Cloudflare Workers Build does not - it
-## rebuilds the Worker's bindings and ANTHROPIC_API_KEY, which lives outside
-## wrangler.jsonc, disappears. The Worker stays up and every route works except
-## the one that needs a key, so it looks like an app bug rather than a deploy
-## problem. This check makes the local path self-healing; a CI deploy still
-## needs `make secret` afterwards.
+## ANTHROPIC_API_KEY lives outside wrangler.jsonc, so a deploy that rebuilds the
+## Worker's bindings from that file alone deletes it. The Worker stays up and
+## every route works except the one that needs a key, which reads as an app bug
+## rather than a deploy problem - that is why it kept looking intermittent.
+##
+## This is the only supported way to deploy. Turn deploy-on-push OFF in the
+## Cloudflare dashboard (Worker -> Settings -> Build): a Workers Build has no
+## `make secret` to heal itself, so it drops the key on every push and leaves
+## the site broken until someone notices. While it is on, this target only
+## protects the deploys you run yourself.
 deploy: vendor dist
 	cd worker && uv run pywrangler deploy
 	@if cd worker && npx --yes wrangler secret list 2>/dev/null \
@@ -79,6 +87,26 @@ deploy: vendor dist
 		echo "→ ANTHROPIC_API_KEY missing after deploy; restoring"; \
 		$(MAKE) --no-print-directory secret; \
 	fi
+	@$(MAKE) --no-print-directory verify
+
+## Ask the deployed Worker whether it is actually healthy.
+##
+## `secret list` only proves a binding exists; this proves the key behind it
+## authenticates. Retries because a freshly uploaded secret takes a few seconds
+## to propagate and reports the old state until it does. Run it after any deploy
+## you did not make yourself.
+verify:
+	@echo "→ checking $(WORKER_URL)/api/health" ; \
+	for i in 1 2 3 4 5 6; do \
+		body=$$(curl -fsS -m 15 "$(WORKER_URL)/api/health" 2>/dev/null) ; \
+		case "$$body" in \
+			*'"ok": true'*) echo "→ healthy: $$body" ; exit 0 ;; \
+		esac ; \
+		sleep 5 ; \
+	done ; \
+	echo "→ UNHEALTHY: $$body" ; \
+	echo "   if it reports the key is not set, run: make secret" ; \
+	exit 1
 
 ## Upload backend/.env's key as the Worker's secret. Idempotent - run it any
 ## time the deployed /api/health reports the key is not set. Piped via stdin so
